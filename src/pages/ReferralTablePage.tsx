@@ -1,0 +1,1970 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { ChangeEvent, CSSProperties, ReactNode } from 'react'
+import clsx from 'clsx'
+import AppHeader from '../components/AppHeader'
+import { supabase } from '../lib/supabaseClient'
+import { useSupabaseAuth } from '../lib/useSupabaseAuth'
+
+type FieldType = 'text' | 'checkbox' | 'date' | 'datetime'
+
+type ColumnDef = {
+  key: string
+  label: string
+  type: FieldType
+}
+
+type RowValue = string | boolean
+
+type Row = {
+  id: string
+  archived?: boolean
+} & Record<string, RowValue>
+
+type ReferralProviderOption = {
+  id: string
+  referral_provider: string
+  grp_org_provider: string | null
+}
+
+const SPECIALTIES = [
+  'Colonoscopy and EGD',
+  'General Surgery',
+  'Spine Neuro Rajamand',
+  'Ortho',
+  'Ophthalmology',
+  'Rajamand Follow Ups',
+  'IR Carlevato',
+  'Heme Onc Rice',
+  'Infusion',
+  "Women's Health",
+  'Cardio Deschutter',
+  'Singh Cancellations',
+  'Hernia Sx Waitlist',
+] as const
+
+const INSURANCE_OPTIONS = [
+  '',
+  'Medicare Aetna',
+  'Aetna Medicare Advantage',
+  'Blue Cross Blue Shield (BCBS)',
+  'BCBS Arizona',
+  'Cigna',
+  'UnitedHealthcare',
+  'UnitedHealthcare Medicare Advantage Banner Aetna',
+  'Self Pay',
+  'Cash Pay',
+  'Workers’ Compensation',
+  'Accident / Liability',
+] as const
+
+const COLONOSCOPY_FORMS_SENT_OPTIONS = [
+  'Colonoscopy Prep',
+  'Colonoscopy Consent',
+  'EGD Prep',
+  'EGD Consent',
+  'HIPAA',
+  'Forms Sent',
+  'Other',
+] as const
+
+type Specialty = (typeof SPECIALTIES)[number]
+
+function parseFormsSentValue(input: unknown) {
+  if (typeof input !== 'string') return { selected: [] as string[], otherText: '' }
+  const parts = input
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  const other = parts.find((p) => p.toLowerCase().startsWith('other:'))
+  const otherText = other ? other.slice(other.indexOf(':') + 1).trim() : ''
+  const selected = parts
+    .filter((p) => !p.toLowerCase().startsWith('other:'))
+    .map((p) => (p.toLowerCase() === 'other' ? 'Other' : p))
+
+  if (otherText && !selected.includes('Other')) {
+    selected.push('Other')
+  }
+
+  return { selected, otherText }
+}
+
+function buildFormsSentValue(selected: string[], otherText: string) {
+  const unique = Array.from(new Set(selected.map((s) => s.trim()).filter(Boolean)))
+  const withoutOther = unique.filter((s) => s !== 'Other')
+  if (!unique.includes('Other')) return withoutOther.join(', ')
+  const base = [...withoutOther, 'Other']
+  const trimmed = otherText.trim()
+  if (!trimmed) return base.join(', ')
+  return [...withoutOther, `Other: ${trimmed}`].join(', ')
+}
+
+function toIsoDateOnly(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toISOString().slice(0, 10)
+}
+
+function toIsoDateTime(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) return null
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return null
+  return d.toISOString()
+}
+
+const SCHEMAS: Record<Specialty, ColumnDef[]> = {
+  'Colonoscopy and EGD': [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'referringProvider', label: 'Referral Provider', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    { key: 'formsSent', label: 'Forms Sent', type: 'text' },
+    { key: 'formReceived', label: 'Form Received', type: 'checkbox' },
+    { key: 'calledToSchedule', label: 'Called to schedule', type: 'checkbox' },
+    { key: 'prepInstructionSent', label: 'Prep Instruction sent', type: 'checkbox' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+    { key: 'notes', label: 'Notes', type: 'text' },
+  ],
+  'General Surgery': [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    {
+      key: 'referringProvider',
+      label: 'Referral Provider',
+      type: 'text',
+    },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+    { key: 'notes', label: 'Notes', type: 'text' },
+  ],
+  'Spine Neuro Rajamand': [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'referringProvider', label: 'Referral Provider', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+    { key: 'notes', label: 'Notes', type: 'text' },
+  ],
+  Ortho: [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'referringProvider', label: 'Referral Provider', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    { key: 'notes', label: 'Notes', type: 'text' },
+    { key: 'firstPatientCommunication', label: '1st Communication', type: 'date' },
+    { key: 'secondPatientCommunication', label: '2nd Communication', type: 'date' },
+    { key: 'thirdPatientCommunication', label: '3rd Communication', type: 'date' },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+    { key: 'notes2', label: 'Notes 2', type: 'text' },
+  ],
+  Ophthalmology: [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'referringProvider', label: 'Referral Provider', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+  ],
+  'Rajamand Follow Ups': [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'nextVisit', label: 'Next Visit', type: 'text' },
+    { key: 'firstPatientCommunication', label: '1st Communication', type: 'date' },
+    { key: 'secondPatientCommunication', label: '2nd Communication', type: 'date' },
+    { key: 'thirdPatientCommunication', label: '3rd Communication', type: 'date' },
+    { key: 'apptDateTime', label: 'Scheduled Date/Time', type: 'datetime' },
+  ],
+  'IR Carlevato': [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'referringProvider', label: 'Referral Provider', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+  ],
+  'Heme Onc Rice': [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'ngmPatient', label: 'NGM Patient?', type: 'checkbox' },
+    { key: 'referringProvider', label: 'Referral Provider', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+    { key: 'notes', label: 'Notes', type: 'text' },
+  ],
+  Infusion: [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'ngmPatient', label: 'NGM Patient', type: 'checkbox' },
+    { key: 'referringProvider', label: 'Referral Provider', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+    { key: 'column1', label: 'Column1', type: 'text' },
+    { key: 'column2', label: 'Column2', type: 'text' },
+  ],
+  "Women's Health": [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'referringProvider', label: 'Referral Provider', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+    { key: 'notes', label: 'Notes', type: 'text' },
+  ],
+  'Cardio Deschutter': [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    {
+      key: 'referringProvider',
+      label: 'Referral Provider',
+      type: 'text',
+    },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+  ],
+  'Singh Cancellations': [
+    { key: 'needsCall', label: 'Needs Call', type: 'checkbox' },
+    { key: 'dateCancelled', label: 'Date Cancelled', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+    { key: 'notes', label: 'Notes', type: 'text' },
+  ],
+  'Hernia Sx Waitlist': [
+    { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
+    { key: 'patientName', label: 'Patient Name', type: 'text' },
+    { key: 'dob', label: 'DOB', type: 'date' },
+    { key: 'phoneNumber', label: 'Phone', type: 'text' },
+    { key: 'insurance', label: 'Insurance', type: 'text' },
+    { key: 'reason', label: 'Reason', type: 'text' },
+    {
+      key: 'firstPatientCommunication',
+      label: '1st Communication',
+      type: 'date',
+    },
+    {
+      key: 'secondPatientCommunication',
+      label: '2nd Communication',
+      type: 'date',
+    },
+    {
+      key: 'thirdPatientCommunication',
+      label: '3rd Communication',
+      type: 'date',
+    },
+    { key: 'apptDateTime', label: 'Appt date and time', type: 'datetime' },
+  ],
+}
+
+function slugify(input: string) {
+  return input
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+}
+
+function getPatientNameForPrompt(row: Row) {
+  const direct = row.patientName
+  if (typeof direct === 'string' && direct.trim()) return direct.trim()
+
+  for (const [k, v] of Object.entries(row)) {
+    if (k === 'id' || k === 'archived') continue
+    if (!k.toLowerCase().includes('patient')) continue
+    if (!k.toLowerCase().includes('name')) continue
+    if (typeof v === 'string' && v.trim()) return v.trim()
+  }
+
+  return ''
+}
+
+function createEmptyDraft(schema: ColumnDef[]) {
+  const out: Record<string, RowValue> = {}
+  for (const col of schema) {
+    out[col.key] = col.type === 'checkbox' ? false : ''
+  }
+  return out
+}
+
+function parseDateForFilter(v: unknown) {
+  if (typeof v !== 'string' || !v.trim()) return null
+  const d = new Date(v)
+  if (Number.isNaN(d.getTime())) return null
+  d.setHours(0, 0, 0, 0)
+  return d
+}
+
+function normalizeBoolean(v: unknown) {
+  return v === true
+}
+
+function normalizeBooleanLoose(v: unknown) {
+  if (v === true) return true
+  if (typeof v === 'number') return v !== 0
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase()
+    return s === 'true' || s === 'yes' || s === 'y' || s === '1' || s === 'x'
+  }
+  return false
+}
+
+export default function ReferralTablePage({
+}: {}) {
+  const { session } = useSupabaseAuth()
+  const [activeSpecialty, setActiveSpecialty] = useState<Specialty>(SPECIALTIES[0])
+
+  const schema = useMemo(() => SCHEMAS[activeSpecialty], [activeSpecialty])
+
+  const [rows, setRows] = useState<Row[]>([])
+  const [isRowsLoading, setIsRowsLoading] = useState(false)
+  const [rowsError, setRowsError] = useState<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+
+  const [providerOptions, setProviderOptions] = useState<ReferralProviderOption[]>([])
+
+  useEffect(() => {
+    let isMounted = true
+
+    void (async () => {
+      const { data, error } = await supabase
+        .from('referral_providers')
+        .select('id, referral_provider, grp_org_provider')
+        .order('referral_provider', { ascending: true })
+
+      if (!isMounted) return
+      if (error) {
+        setProviderOptions([])
+        return
+      }
+      setProviderOptions((data ?? []) as any)
+    })()
+
+    return () => {
+      isMounted = false
+    }
+  }, [])
+
+  function providerLabel(p: ReferralProviderOption) {
+    const left = (p.referral_provider ?? '').trim()
+    const right = (p.grp_org_provider ?? '').trim()
+    return right ? `${left} - ${right}` : left
+  }
+
+  function mapColonoscopyEgdRecordToRow(r: any, schemaForRow: ColumnDef[]): Row {
+    const out: Row = {
+      id: String(r.id ?? ''),
+      archived: typeof r.record_status === 'string' ? r.record_status !== 'active' : false,
+    }
+
+    out.referringProviderId = r.referral_provider_id != null ? String(r.referral_provider_id) : ''
+
+    const mapped: Record<string, unknown> = {
+      dateReferralReceived: r.date_referral_received,
+      patientName: r.patient_name,
+      dob: r.dob,
+      phoneNumber: r.phone,
+      insurance: r.insurance,
+      referringProvider: r.referral_provider,
+      referringProviderId: r.referral_provider_id != null ? String(r.referral_provider_id) : '',
+      reason: r.reason,
+      formsSent: r.forms_sent,
+      formReceived: r.form_received,
+      calledToSchedule: r.called_to_schedule,
+      prepInstructionSent: r.prep_instruction_sent,
+      firstPatientCommunication: r.communication_1,
+      secondPatientCommunication: r.communication_2,
+      thirdPatientCommunication: r.communication_3,
+      apptDateTime: r.appt_date_time,
+      notes: r.notes,
+    }
+
+    for (const col of schemaForRow) {
+      const raw = mapped[col.key]
+      out[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(raw) : String(raw ?? '')
+    }
+
+    return out
+  }
+
+  function mapGeneralSurgeryRecordToRow(r: any, schemaForRow: ColumnDef[]): Row {
+    const out: Row = {
+      id: String(r.id ?? ''),
+      archived: typeof r.record_status === 'string' ? r.record_status !== 'active' : false,
+    }
+
+    out.referringProviderId = r.referral_provider_id != null ? String(r.referral_provider_id) : ''
+
+    const mapped: Record<string, unknown> = {
+      dateReferralReceived: r.date_referral_received,
+      patientName: r.patient_name,
+      dob: r.dob,
+      phoneNumber: r.phone,
+      insurance: r.insurance,
+      referringProvider: r.referral_provider,
+      referringProviderId: r.referral_provider_id != null ? String(r.referral_provider_id) : '',
+      reason: r.reason,
+      firstPatientCommunication: r.communication_1,
+      secondPatientCommunication: r.communication_2,
+      thirdPatientCommunication: r.communication_3,
+      apptDateTime: r.appt_date_time,
+      notes: r.notes,
+    }
+
+    for (const col of schemaForRow) {
+      const raw = mapped[col.key]
+      out[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(raw) : String(raw ?? '')
+    }
+
+    return out
+  }
+
+  function mapSupabaseRecordToRow(r: any, schemaForRow: ColumnDef[]): Row {
+    const out: Row = {
+      id: String(r.id ?? r.uuid ?? r.row_id ?? ''),
+      archived: r.archived === true,
+    }
+
+    const payload: Record<string, unknown> =
+      r && typeof r === 'object' && r.data && typeof r.data === 'object' ? (r.data as any) : r
+
+    if (payload && 'referringProviderId' in payload) {
+      out.referringProviderId = String((payload as any).referringProviderId ?? '')
+    }
+
+    for (const col of schemaForRow) {
+      const raw = payload?.[col.key]
+      out[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(raw) : String(raw ?? '')
+    }
+
+    return out
+  }
+
+  useEffect(() => {
+    const uid = session?.user?.id
+    if (!uid) return
+
+    let isMounted = true
+    setIsRowsLoading(true)
+    setRowsError(null)
+
+    void (async () => {
+      const isColonoscopy = activeSpecialty === 'Colonoscopy and EGD'
+      const isGeneralSurgery = activeSpecialty === 'General Surgery'
+
+      const query = isColonoscopy
+        ? supabase.from('referrals_colonoscopy_egd').select('*').eq('record_status', 'active')
+        : isGeneralSurgery
+          ? supabase.from('referrals_general_surgery').select('*')
+          : supabase
+              .from('referrals')
+              .select('id, archived, data, created_at')
+              .eq('user_id', uid)
+              .eq('specialty', activeSpecialty)
+
+      const { data, error } = await query.order('created_at', { ascending: false })
+
+      if (!isMounted) return
+
+      if (error) {
+        setRows([])
+        setRowsError(error.message)
+        setIsRowsLoading(false)
+        return
+      }
+
+      const next: Row[] = (data ?? []).map((r: any) =>
+        isColonoscopy
+          ? mapColonoscopyEgdRecordToRow(r, schema)
+          : isGeneralSurgery
+            ? mapGeneralSurgeryRecordToRow(r, schema)
+            : mapSupabaseRecordToRow(r, schema),
+      )
+
+      setRows(next)
+      setIsRowsLoading(false)
+    })()
+
+    return () => {
+      isMounted = false
+    }
+  }, [activeSpecialty, schema, session?.user?.id])
+
+  const [searchBy, setSearchBy] = useState<string>('__all__')
+  const [searchText, setSearchText] = useState('')
+
+  const dateColumns = useMemo(
+    () => schema.filter((c) => c.type === 'date' || c.type === 'datetime'),
+    [schema],
+  )
+
+  const defaultDateKey = useMemo(() => {
+    const preferred = dateColumns.find((c) => c.key === 'dateReferralReceived')
+    return preferred?.key ?? '__none__'
+  }, [dateColumns])
+
+  const [dateFilterKey, setDateFilterKey] = useState<string>(defaultDateKey)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
+
+  useEffect(() => {
+    setDateFilterKey((prev) => {
+      if (prev === '__none__') return defaultDateKey
+      if (dateColumns.some((c) => c.key === prev)) return prev
+      return defaultDateKey
+    })
+  }, [dateColumns, defaultDateKey])
+
+  const [sortBy, setSortBy] = useState<string>('__none__')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
+
+  const [isFreezeOpen, setIsFreezeOpen] = useState(false)
+  const [pinnedKeys, setPinnedKeys] = useState<string[]>([])
+  const tableRef = useRef<HTMLTableElement | null>(null)
+  const [pinnedLeftOffsets, setPinnedLeftOffsets] = useState<number[]>([])
+  const freezeMenuRef = useRef<HTMLDivElement | null>(null)
+
+  function downloadCsv() {
+    const header = schema.map((c) => c.label)
+    const keys = schema.map((c) => c.key)
+
+    const escape = (v: unknown) => {
+      const s = String(v ?? '')
+      const needsQuotes = /[",\n\r]/.test(s)
+      const escaped = s.replace(/"/g, '""')
+      return needsQuotes ? `"${escaped}"` : escaped
+    }
+
+    const lines = [header.map(escape).join(',')]
+    for (const r of sortedRows) {
+      lines.push(keys.map((k) => escape(r[k])).join(','))
+    }
+
+    const csv = `${lines.join('\n')}\n`
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${slugify(activeSpecialty)}_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+  }
+
+  const filteredRows = useMemo(() => {
+    const q = searchText.trim().toLowerCase()
+    const base = rows.filter((r) => r.archived !== true)
+
+    const from = dateFrom ? parseDateForFilter(dateFrom) : null
+    const to = dateTo ? parseDateForFilter(dateTo) : null
+    const toInclusive = to ? new Date(to) : null
+    if (toInclusive) toInclusive.setDate(toInclusive.getDate() + 1)
+
+    const dateFiltered =
+      dateFilterKey === '__none__' || (!from && !toInclusive)
+        ? base
+        : base.filter((r) => {
+            const d = parseDateForFilter(r[dateFilterKey])
+            if (!d) return false
+            if (from && d < from) return false
+            if (toInclusive && d >= toInclusive) return false
+            return true
+          })
+
+    if (!q) return dateFiltered
+
+    const searchColKeys =
+      searchBy === '__all__' ? schema.map((c) => c.key) : [searchBy]
+
+    return dateFiltered.filter((r) => {
+      for (const k of searchColKeys) {
+        const v = r[k]
+        const asString = typeof v === 'boolean' ? (v ? 'yes' : 'no') : String(v ?? '')
+        if (asString.toLowerCase().includes(q)) return true
+      }
+      return false
+    })
+  }, [rows, schema, searchBy, searchText, dateFilterKey, dateFrom, dateTo])
+
+  const sortedRows = useMemo(() => {
+    if (sortBy === '__none__') return filteredRows
+
+    const direction = sortDir === 'asc' ? 1 : -1
+    const sorted = [...filteredRows]
+
+    sorted.sort((a, b) => {
+      const av = a[sortBy]
+      const bv = b[sortBy]
+
+      if (typeof av === 'boolean' && typeof bv === 'boolean') {
+        if (av === bv) return 0
+        return av ? 1 * direction : -1 * direction
+      }
+
+      const as = String(av ?? '').toLowerCase()
+      const bs = String(bv ?? '').toLowerCase()
+
+      if (as === bs) return 0
+      return as < bs ? -1 * direction : 1 * direction
+    })
+
+    return sorted
+  }, [filteredRows, sortBy, sortDir])
+
+  useEffect(() => {
+    setPinnedKeys((prev) => prev.filter((k) => schema.some((c) => c.key === k)))
+  }, [schema])
+
+  useEffect(() => {
+    if (!isFreezeOpen) return
+
+    function onMouseDown(e: MouseEvent) {
+      const target = e.target as Node | null
+      if (!target) return
+      if (freezeMenuRef.current && freezeMenuRef.current.contains(target)) return
+      setIsFreezeOpen(false)
+    }
+
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [isFreezeOpen])
+
+  const [isEditorOpen, setIsEditorOpen] = useState(false)
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editorSpecialty, setEditorSpecialty] = useState<Specialty>(SPECIALTIES[0])
+  const editorSchema = useMemo(
+    () => SCHEMAS[editorSpecialty],
+    [editorSpecialty],
+  )
+  const [draft, setDraft] = useState<Record<string, RowValue>>(() =>
+    createEmptyDraft(schema),
+  )
+
+  const [isFormsSentOpen, setIsFormsSentOpen] = useState(false)
+  const formsSentMenuRef = useRef<HTMLDivElement | null>(null)
+
+  const colonoscopyFormsState = useMemo(() => {
+    if (editorSpecialty !== 'Colonoscopy and EGD') {
+      return { selected: [] as string[], otherText: '' }
+    }
+    return parseFormsSentValue(draft.formsSent)
+  }, [draft.formsSent, editorSpecialty])
+
+  useEffect(() => {
+    if (!isFormsSentOpen) return
+
+    function onMouseDown(e: MouseEvent) {
+      const target = e.target as Node | null
+      if (!target) return
+      if (formsSentMenuRef.current && formsSentMenuRef.current.contains(target)) return
+      setIsFormsSentOpen(false)
+    }
+
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [isFormsSentOpen])
+
+  const editingRow = useMemo(() => {
+    if (!editingId) return null
+    return rows.find((r: Row) => r.id === editingId) ?? null
+  }, [editingId, rows])
+
+  function openAdd() {
+    setSaveError(null)
+    setEditingId(null)
+    setEditorSpecialty(activeSpecialty)
+    setDraft(createEmptyDraft(SCHEMAS[activeSpecialty]))
+    setIsEditorOpen(true)
+  }
+
+  function openEdit(id: string) {
+    setSaveError(null)
+    const row = rows.find((r: Row) => r.id === id)
+    if (!row) return
+    setEditingId(id)
+    setEditorSpecialty(activeSpecialty)
+    const nextDraft: Record<string, RowValue> = createEmptyDraft(schema)
+    for (const col of schema) {
+      nextDraft[col.key] = row[col.key]
+    }
+    if (typeof row.referringProviderId === 'string') {
+      nextDraft.referringProviderId = row.referringProviderId
+    }
+    setDraft(nextDraft)
+    setIsEditorOpen(true)
+  }
+
+  function closeEditor() {
+    setSaveError(null)
+    setIsEditorOpen(false)
+    setEditingId(null)
+    setEditorSpecialty(activeSpecialty)
+    setDraft(createEmptyDraft(schema))
+  }
+
+  function saveDraft() {
+    const uid = session?.user?.id
+    if (!uid) return
+    setSaveError(null)
+
+    const data: Record<string, unknown> = {}
+    for (const col of editorSchema) {
+      data[col.key] = draft[col.key]
+    }
+
+    if (typeof draft.referringProviderId === 'string' && draft.referringProviderId.trim()) {
+      data.referringProviderId = draft.referringProviderId
+    }
+
+    const targetSpecialty = editingId ? activeSpecialty : editorSpecialty
+    const archived = editingRow?.archived === true
+
+    void (async () => {
+      const isColonoscopy = targetSpecialty === 'Colonoscopy and EGD'
+      const isGeneralSurgery = targetSpecialty === 'General Surgery'
+
+      const selectedProvider =
+        typeof draft.referringProviderId === 'string' && draft.referringProviderId.trim()
+          ? providerOptions.find((p) => String(p.id) === String(draft.referringProviderId)) ?? null
+          : null
+
+      const resolvedProviderText = selectedProvider ? providerLabel(selectedProvider) : String(data.referringProvider ?? '')
+      const resolvedProviderId = selectedProvider ? Number(selectedProvider.id) : null
+
+      if (isColonoscopy) {
+        const formsSentValue = buildFormsSentValue(
+          colonoscopyFormsState.selected,
+          colonoscopyFormsState.otherText,
+        )
+
+        const payload = {
+          date_referral_received: toIsoDateOnly(data.dateReferralReceived),
+          patient_name: String(data.patientName ?? ''),
+          dob: toIsoDateOnly(data.dob),
+          phone: String(data.phoneNumber ?? ''),
+          insurance: String(data.insurance ?? ''),
+          referral_provider: resolvedProviderText || null,
+          referral_provider_id: resolvedProviderId,
+          reason: String(data.reason ?? ''),
+          forms_sent: formsSentValue || null,
+          form_received: data.formReceived === true,
+          called_to_schedule: data.calledToSchedule === true,
+          prep_instruction_sent: data.prepInstructionSent === true,
+          communication_1: toIsoDateOnly(data.firstPatientCommunication),
+          communication_2: toIsoDateOnly(data.secondPatientCommunication),
+          communication_3: toIsoDateOnly(data.thirdPatientCommunication),
+          appt_date_time: toIsoDateTime(data.apptDateTime),
+          notes: String(data.notes ?? ''),
+          record_status: 'active',
+          updated_at: new Date().toISOString(),
+        }
+
+        if (editingId) {
+          const { error } = await supabase
+            .from('referrals_colonoscopy_egd')
+            .update(payload)
+            .eq('id', Number(editingId))
+
+          if (error) {
+            setSaveError(error.message)
+            return
+          }
+
+          {
+            setRows((prev) =>
+              prev.map((r) =>
+                r.id === editingId
+                  ? {
+                      ...r,
+                      ...Object.fromEntries(
+                        Object.entries(data).map(([k, v]) => [k, typeof v === 'boolean' ? v : String(v ?? '')]),
+                      ),
+                      referringProvider: resolvedProviderText,
+                      referringProviderId: resolvedProviderId != null ? String(resolvedProviderId) : '',
+                      formsSent: formsSentValue,
+                      archived: false,
+                    }
+                  : r,
+              ),
+            )
+            closeEditor()
+          }
+          return
+        }
+
+        const { data: inserted, error } = await supabase
+          .from('referrals_colonoscopy_egd')
+          .insert(payload)
+          .select('id')
+          .single()
+
+        if (error) {
+          setSaveError(error.message)
+          return
+        }
+
+        if (inserted?.id != null) {
+          const nextRow: Row = { id: String(inserted.id), archived: false }
+          for (const col of editorSchema) {
+            const v = col.key === 'formsSent' ? formsSentValue : data[col.key]
+            nextRow[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(v) : String(v ?? '')
+          }
+          nextRow.referringProvider = resolvedProviderText
+          nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
+          if (targetSpecialty === activeSpecialty) {
+            setRows((prev) => [nextRow, ...prev])
+          }
+          closeEditor()
+        }
+
+        return
+      }
+
+      if (isGeneralSurgery) {
+        const payload = {
+          date_referral_received: toIsoDateOnly(data.dateReferralReceived),
+          patient_name: String(data.patientName ?? ''),
+          dob: toIsoDateOnly(data.dob),
+          phone: String(data.phoneNumber ?? ''),
+          insurance: String(data.insurance ?? ''),
+          referral_provider: resolvedProviderText || null,
+          referral_provider_id: resolvedProviderId,
+          reason: String(data.reason ?? ''),
+          communication_1: toIsoDateOnly(data.firstPatientCommunication),
+          communication_2: toIsoDateOnly(data.secondPatientCommunication),
+          communication_3: toIsoDateOnly(data.thirdPatientCommunication),
+          appt_date_time: toIsoDateTime(data.apptDateTime),
+          notes: String(data.notes ?? ''),
+          record_status: 'active',
+          updated_at: new Date().toISOString(),
+        }
+
+        if (editingId) {
+          const { error } = await supabase
+            .from('referrals_general_surgery')
+            .update(payload)
+            .eq('id', Number(editingId))
+
+          if (error) {
+            setSaveError(error.message)
+            return
+          }
+
+          {
+            setRows((prev) =>
+              prev.map((r) =>
+                r.id === editingId
+                  ? {
+                      ...r,
+                      ...Object.fromEntries(
+                        Object.entries(data).map(([k, v]) => [k, typeof v === 'boolean' ? v : String(v ?? '')]),
+                      ),
+                      referringProvider: resolvedProviderText,
+                      referringProviderId: resolvedProviderId != null ? String(resolvedProviderId) : '',
+                      archived: false,
+                    }
+                  : r,
+              ),
+            )
+            closeEditor()
+          }
+          return
+        }
+
+        const { data: inserted, error } = await supabase
+          .from('referrals_general_surgery')
+          .insert(payload)
+          .select('id')
+          .single()
+
+        if (error) {
+          setSaveError(error.message)
+          return
+        }
+
+        if (inserted?.id != null) {
+          const nextRow: Row = { id: String(inserted.id), archived: false }
+          for (const col of editorSchema) {
+            const v = col.key === 'referringProvider' ? resolvedProviderText : data[col.key]
+            nextRow[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(v) : String(v ?? '')
+          }
+          nextRow.referringProvider = resolvedProviderText
+          nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
+          if (targetSpecialty === activeSpecialty) {
+            setRows((prev) => [nextRow, ...prev])
+          }
+          closeEditor()
+        }
+
+        return
+      }
+
+      if (editingId) {
+        const { error } = await supabase
+          .from('referrals')
+          .update({ specialty: targetSpecialty, archived, data, updated_at: new Date().toISOString() })
+          .eq('id', editingId)
+          .eq('user_id', uid)
+
+        if (error) {
+          setSaveError(error.message)
+          return
+        }
+
+        {
+          setRows((prev) =>
+            prev.map((r) => (r.id === editingId ? { ...r, ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, typeof v === 'boolean' ? v : String(v ?? '')])), archived } : r)),
+          )
+          closeEditor()
+        }
+        return
+      }
+
+      const { data: inserted, error } = await supabase
+        .from('referrals')
+        .insert({ user_id: uid, specialty: targetSpecialty, archived: false, data })
+        .select('id')
+        .single()
+
+      if (error) {
+        setSaveError(error.message)
+        return
+      }
+
+      if (inserted?.id) {
+        const nextRow: Row = { id: String(inserted.id), archived: false }
+        for (const col of editorSchema) {
+          const v = data[col.key]
+          nextRow[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(v) : String(v ?? '')
+        }
+        if (targetSpecialty === activeSpecialty) {
+          setRows((prev) => [nextRow, ...prev])
+        }
+        closeEditor()
+      }
+    })()
+  }
+
+  function archiveRow(id: string) {
+    const uid = session?.user?.id
+    if (!uid) return
+    void (async () => {
+      const isColonoscopy = activeSpecialty === 'Colonoscopy and EGD'
+      const isGeneralSurgery = activeSpecialty === 'General Surgery'
+      const { error } = isColonoscopy
+        ? await supabase
+            .from('referrals_colonoscopy_egd')
+            .update({ record_status: 'archived', updated_at: new Date().toISOString() })
+            .eq('id', Number(id))
+        : isGeneralSurgery
+          ? await supabase
+              .from('referrals_general_surgery')
+              .update({ record_status: 'archived', updated_at: new Date().toISOString() })
+              .eq('id', Number(id))
+        : await supabase
+            .from('referrals')
+            .update({ archived: true, updated_at: new Date().toISOString() })
+            .eq('id', id)
+            .eq('user_id', uid)
+      if (!error) setRows((prev) => prev.map((r) => (r.id === id ? { ...r, archived: true } : r)))
+    })()
+  }
+
+  function isNotesColumn(col: ColumnDef) {
+    const key = col.key.toLowerCase()
+    const label = col.label.toLowerCase()
+    return key.includes('notes') || label.includes('notes')
+  }
+
+  function isDateColumn(col: ColumnDef) {
+    return col.type === 'date'
+  }
+
+  function isDateTimeColumn(col: ColumnDef) {
+    return col.type === 'datetime'
+  }
+
+  const pinnedKeysInSchemaOrder = useMemo(() => {
+    const set = new Set(pinnedKeys)
+    return schema.filter((c) => set.has(c.key)).map((c) => c.key)
+  }, [pinnedKeys, schema])
+
+  const displaySchema = useMemo(() => {
+    if (pinnedKeys.length === 0) return schema
+
+    const set = new Set(pinnedKeys)
+    const pinned = schema.filter((c) => set.has(c.key))
+    const rest = schema.filter((c) => !set.has(c.key))
+    return [...pinned, ...rest]
+  }, [schema, pinnedKeys])
+
+  useEffect(() => {
+    if (!tableRef.current) return
+
+    const pinnedCount = pinnedKeysInSchemaOrder.length
+    if (pinnedCount <= 0) {
+      setPinnedLeftOffsets([])
+      return
+    }
+
+    const ths = Array.from(
+      tableRef.current.querySelectorAll<HTMLTableCellElement>('thead th[data-col-key]'),
+    )
+
+    const widths: number[] = []
+    for (let i = 0; i < pinnedCount; i++) {
+      const th = ths[i]
+      widths.push(th ? th.getBoundingClientRect().width : 0)
+    }
+
+    const offsets: number[] = []
+    let acc = 0
+    for (let i = 0; i < widths.length; i++) {
+      offsets.push(acc)
+      acc += widths[i]
+    }
+
+    setPinnedLeftOffsets(offsets)
+  }, [displaySchema, pinnedKeysInSchemaOrder.length])
+
+  function stickyStyle(index: number, isHeader: boolean) {
+    if (index >= pinnedKeysInSchemaOrder.length) return undefined
+    return {
+      position: 'sticky' as const,
+      left: pinnedLeftOffsets[index],
+      zIndex: isHeader ? 30 : 20,
+      background: '#ffffff',
+    }
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+      <AppHeader
+        title="ReferralTracker"
+        subtitle={activeSpecialty}
+        right={
+          <>
+            <button
+              type="button"
+              onClick={openAdd}
+              className="rounded-md bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand/90"
+            >
+              Add Referral
+            </button>
+
+            <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+              <div className="grid h-7 w-7 place-items-center rounded-full bg-brand text-xs font-semibold text-white">
+                LN
+              </div>
+              <div className="whitespace-nowrap">Lokhi Nalam</div>
+            </div>
+          </>
+        }
+      />
+
+      <div className="mx-auto border-b bg-white px-4 pb-3">
+        <div className="flex w-full gap-2 overflow-x-auto pt-3">
+          {SPECIALTIES.map((s) => {
+            const isActive = s === activeSpecialty
+            return (
+              <button
+                key={s}
+                type="button"
+                onClick={() => setActiveSpecialty(s)}
+                className={clsx(
+                  'whitespace-nowrap rounded-full px-3 py-1 text-sm',
+                  isActive
+                    ? 'bg-brand text-white'
+                    : 'bg-white text-slate-800 hover:bg-[rgb(48_158_235/0.08)]',
+                )}
+              >
+                {s}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      <main className="mx-auto px-4 py-6">
+        <div className="mb-3 flex flex-wrap items-end gap-3">
+          <label className="grid gap-1">
+            <span className="text-xs font-medium text-slate-700">Search by</span>
+            <select
+              value={searchBy}
+              onChange={(e) => setSearchBy(e.target.value)}
+              className="w-[240px] rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+            >
+              <option value="__all__">All columns</option>
+              {schema.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-xs font-medium text-slate-700">Search</span>
+            <input
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              className="w-[320px] rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+              placeholder="Type to filter rows..."
+            />
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-xs font-medium text-slate-700">Sort by</span>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="w-[240px] rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+            >
+              <option value="__none__">None</option>
+              {schema.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <button
+            type="button"
+            onClick={() => setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+            className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+            title={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+            aria-label={sortDir === 'asc' ? 'Ascending' : 'Descending'}
+          >
+            <span>{sortDir === 'asc' ? 'Asc' : 'Desc'}</span>
+            <svg
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className={clsx(
+                'h-4 w-4 text-slate-600 transition-transform',
+                sortDir === 'desc' && 'rotate-180',
+              )}
+            >
+              <path
+                fillRule="evenodd"
+                d="M10 3a.75.75 0 01.75.75v10.69l2.22-2.22a.75.75 0 111.06 1.06l-3.5 3.5a.75.75 0 01-1.06 0l-3.5-3.5a.75.75 0 111.06-1.06l2.22 2.22V3.75A.75.75 0 0110 3z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+
+          <div ref={freezeMenuRef} className="relative">
+            <button
+              type="button"
+              onClick={() => setIsFreezeOpen((v) => !v)}
+              className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+            >
+              <span>Freeze Columns</span>
+              <svg
+                viewBox="0 0 20 20"
+                fill="currentColor"
+                className={clsx(
+                  'h-4 w-4 text-slate-600 transition-transform',
+                  isFreezeOpen && 'rotate-180',
+                )}
+              >
+                <path
+                  fillRule="evenodd"
+                  d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.25a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+
+            {isFreezeOpen ? (
+              <div className="absolute right-0 top-11 z-40 w-[320px] rounded-md border bg-white p-2 shadow-lg">
+                <div className="px-2 pb-2 text-xs font-semibold text-slate-700">
+                  Select columns (order = freeze order)
+                </div>
+                <div className="max-h-[320px] overflow-auto">
+                  {schema.map((c) => {
+                    const checked = pinnedKeys.includes(c.key)
+                    return (
+                      <label
+                        key={c.key}
+                        className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-sm hover:bg-slate-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => {
+                            const nextChecked = e.target.checked
+                            setPinnedKeys((prev) => {
+                              if (nextChecked) {
+                                if (prev.includes(c.key)) return prev
+                                return [...prev, c.key]
+                              }
+                              return prev.filter((k) => k !== c.key)
+                            })
+                          }}
+                        />
+                        <span className="flex-1">{c.label}</span>
+                        {checked ? (
+                          <span className="text-xs text-slate-500">
+                            #{pinnedKeysInSchemaOrder.indexOf(c.key) + 1}
+                          </span>
+                        ) : null}
+                      </label>
+                    )
+                  })}
+                </div>
+
+                {pinnedKeys.length ? (
+                  <button
+                    type="button"
+                    onClick={() => setPinnedKeys([])}
+                    className="mt-2 w-full rounded-md border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+                  >
+                    Clear frozen columns
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+
+          {searchText.trim() ? (
+            <button
+              type="button"
+              onClick={() => setSearchText('')}
+              className="rounded-md border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+            >
+              Clear
+            </button>
+          ) : null}
+
+          <label className="grid gap-1">
+            <span className="text-xs font-medium text-slate-700">Date field</span>
+            <select
+              value={dateFilterKey}
+              onChange={(e) => setDateFilterKey(e.target.value)}
+              className="w-[240px] rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+            >
+              <option value="__none__">No date filter</option>
+              {dateColumns.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-xs font-medium text-slate-700">From</span>
+            <input
+              type="date"
+              value={dateFrom}
+              onChange={(e) => setDateFrom(e.target.value)}
+              className="w-[170px] rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+            />
+          </label>
+
+          <label className="grid gap-1">
+            <span className="text-xs font-medium text-slate-700">To</span>
+            <input
+              type="date"
+              value={dateTo}
+              onChange={(e) => setDateTo(e.target.value)}
+              className="w-[170px] rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+            />
+          </label>
+
+          <button
+            type="button"
+            onClick={downloadCsv}
+            className="flex items-center gap-2 rounded-md border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+          >
+            <span>Download</span>
+            <svg
+              viewBox="0 0 20 20"
+              fill="currentColor"
+              className="h-4 w-4 text-slate-600"
+            >
+              <path
+                fillRule="evenodd"
+                d="M10 2.75a.75.75 0 01.75.75v7.69l2.22-2.22a.75.75 0 111.06 1.06l-3.5 3.5a.75.75 0 01-1.06 0l-3.5-3.5a.75.75 0 111.06-1.06l2.22 2.22V3.5a.75.75 0 01.75-.75zM3.5 12.5a.75.75 0 01.75.75v2.25c0 .414.336.75.75.75h10c.414 0 .75-.336.75-.75V13.25a.75.75 0 011.5 0v2.25A2.25 2.25 0 0115.75 17.75h-11A2.25 2.25 0 012.5 15.5v-2.25a.75.75 0 01.75-.75z"
+                clipRule="evenodd"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <div className="rounded-lg border bg-white">
+          <div className="overflow-x-auto">
+            <table
+              ref={tableRef}
+              className="w-full table-auto border-separate border-spacing-0"
+            >
+              <thead className="sticky top-0 bg-white">
+                <tr>
+                  {displaySchema.map((col, idx) => (
+                    <Th
+                      key={col.key}
+                      dataColKey={col.key}
+                      className={clsx(
+                        isNotesColumn(col) && 'w-[320px] min-w-[320px]',
+                        isDateColumn(col) && 'w-[140px] max-w-[140px]',
+                        isDateTimeColumn(col) && 'w-[190px] max-w-[190px]',
+                      )}
+                      style={stickyStyle(idx, true)}
+                    >
+                      {col.label}
+                    </Th>
+                  ))}
+                  <Th className="w-[160px]">Actions</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedRows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={displaySchema.length + 1}
+                      className="border-t px-4 py-10 text-center text-sm text-slate-600"
+                    >
+                      {isRowsLoading
+                        ? 'Loading…'
+                        : rowsError
+                          ? rowsError
+                          : rows.length === 0
+                            ? 'No referrals yet. Click “Add Referral” to create your first row.'
+                            : 'No results found for your search.'}
+                    </td>
+                  </tr>
+                ) : (
+                  sortedRows.map((r) => (
+                    <tr key={r.id} className="hover:bg-slate-50">
+                      {displaySchema.map((col, idx) => (
+                        <Td
+                          key={col.key}
+                          className={clsx(
+                            col.type === 'checkbox' && 'text-center',
+                            col.type === 'text' && !isNotesColumn(col) && 'truncate',
+                            isNotesColumn(col) && 'whitespace-pre-wrap break-words',
+                            isDateColumn(col) &&
+                              'whitespace-nowrap',
+                            isDateTimeColumn(col) &&
+                              'whitespace-nowrap',
+                            isNotesColumn(col) && 'w-[320px] min-w-[320px]',
+                            isDateColumn(col) && 'w-[140px] max-w-[140px]',
+                            isDateTimeColumn(col) && 'w-[190px] max-w-[190px]',
+                          )}
+                          style={stickyStyle(idx, false)}
+                        >
+                          {col.type === 'checkbox'
+                            ? r[col.key]
+                              ? 'Yes'
+                              : ''
+                            : String(r[col.key] ?? '')}
+                        </Td>
+                      ))}
+                      <Td>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openEdit(r.id)}
+                            className="rounded border px-2 py-1 text-sm hover:bg-white"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              (() => {
+                                const name = getPatientNameForPrompt(r)
+                                const label = name ? `“${name}”` : 'this referral'
+                                const ok = window.confirm(
+                                  `Are you sure you want to archive ${label}?`,
+                                )
+                                if (ok) archiveRow(r.id)
+                              })()
+                            }
+                            className="rounded border border-slate-200 bg-slate-50 px-2 py-1 text-sm text-slate-700 hover:bg-slate-100"
+                          >
+                            Archive
+                          </button>
+                        </div>
+                      </Td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </main>
+
+      {isEditorOpen ? (
+        <div className="fixed inset-0 z-50">
+          <div
+            className="absolute inset-0 bg-black/40"
+            onClick={closeEditor}
+          />
+          <div className="absolute right-0 top-0 h-full w-full max-w-[560px] overflow-y-auto bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <div>
+                <div className="text-sm font-semibold">
+                  {editingRow ? 'Edit Referral' : 'Add Referral'}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeEditor}
+                className="rounded px-2 py-1 text-sm hover:bg-slate-100"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="grid gap-4 px-4 py-4">
+              {!editingRow ? (
+                <Section title="Table">
+                  <Select
+                    label="Add to"
+                    value={editorSpecialty}
+                    options={SPECIALTIES}
+                    onChange={(next) => {
+                      setEditorSpecialty(next)
+                      setDraft(createEmptyDraft(SCHEMAS[next]))
+                    }}
+                  />
+                </Section>
+              ) : null}
+
+              <Section title="Details">
+                {editorSchema.map((col) => {
+                  const value = draft[col.key]
+                  const isReferringProvider =
+                    /referringprovider/i.test(col.key) || /referral\s*provider/i.test(col.label)
+                  if (
+                    editorSpecialty === 'Colonoscopy and EGD' &&
+                    (col.key === 'formReceived' ||
+                      col.key === 'calledToSchedule' ||
+                      col.key === 'prepInstructionSent')
+                  ) {
+                    return null
+                  }
+
+                  if (isReferringProvider) {
+                    const providerId =
+                      typeof draft.referringProviderId === 'string' ? draft.referringProviderId : ''
+                    const providerIdOptions = ['' as const, ...providerOptions.map((p) => String(p.id))] as const
+
+                    return (
+                      <Select
+                        key={col.key}
+                        label={col.label}
+                        value={providerId as (typeof providerIdOptions)[number]}
+                        options={providerIdOptions}
+                        optionLabel={(v) => {
+                          if (!v) return ''
+                          const p = providerOptions.find((x) => String(x.id) === String(v))
+                          return p ? providerLabel(p) : v
+                        }}
+                        onChange={(v) => {
+                          const picked = v
+                            ? providerOptions.find((p) => String(p.id) === String(v)) ?? null
+                            : null
+                          setDraft((d) => ({
+                            ...d,
+                            referringProviderId: v,
+                            referringProvider: picked ? providerLabel(picked) : '',
+                          }))
+                        }}
+                      />
+                    )
+                  }
+                  if (editorSpecialty === 'Colonoscopy and EGD' && col.key === 'formsSent') {
+                    const selected = colonoscopyFormsState.selected
+                    const otherText = colonoscopyFormsState.otherText
+
+                    const summary =
+                      selected.length === 0
+                        ? 'Select…'
+                        : selected.includes('Other')
+                          ? `Selected (${selected.length})`
+                          : selected.join(', ')
+
+                    return (
+                      <div key={col.key} className="grid gap-1">
+                        <div className="text-xs font-medium text-slate-700">{col.label}</div>
+
+                        <div ref={formsSentMenuRef} className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setIsFormsSentOpen((v) => !v)}
+                            className="flex w-full items-center justify-between rounded-md border bg-white px-3 py-2 text-sm text-slate-800 outline-none ring-slate-200 hover:bg-slate-50 focus:ring-2"
+                          >
+                            <span className="truncate">{summary}</span>
+                            <svg
+                              viewBox="0 0 20 20"
+                              fill="currentColor"
+                              className={clsx(
+                                'h-4 w-4 text-slate-600 transition-transform',
+                                isFormsSentOpen && 'rotate-180',
+                              )}
+                            >
+                              <path
+                                fillRule="evenodd"
+                                d="M5.23 7.21a.75.75 0 011.06.02L10 10.94l3.71-3.71a.75.75 0 111.06 1.06l-4.24 4.25a.75.75 0 01-1.06 0L5.21 8.29a.75.75 0 01.02-1.08z"
+                                clipRule="evenodd"
+                              />
+                            </svg>
+                          </button>
+
+                          {isFormsSentOpen ? (
+                            <div className="absolute left-0 top-11 z-40 w-full rounded-md border bg-white p-2 shadow-lg">
+                              <div className="grid gap-2">
+                                {COLONOSCOPY_FORMS_SENT_OPTIONS.map((opt) => {
+                                  const checked = selected.includes(opt)
+                                  return (
+                                    <div key={opt} className="grid gap-2 rounded px-2 py-1 hover:bg-slate-50">
+                                      <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-800">
+                                        <input
+                                          type="checkbox"
+                                          checked={checked}
+                                          onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                                            const nextChecked = e.target.checked
+                                            const nextSelected = nextChecked
+                                              ? Array.from(new Set([...selected, opt]))
+                                              : selected.filter((x) => x !== opt)
+
+                                            const nextOtherText =
+                                              opt === 'Other' && !nextChecked ? '' : otherText
+                                            setDraft((d) => ({
+                                              ...d,
+                                              formsSent: buildFormsSentValue(nextSelected, nextOtherText),
+                                            }))
+                                          }}
+                                          className="h-4 w-4 rounded border-slate-300"
+                                        />
+                                        <span>{opt}</span>
+                                      </label>
+
+                                      {opt === 'Other' && checked ? (
+                                        <input
+                                          type="text"
+                                          value={otherText}
+                                          onChange={(e: ChangeEvent<HTMLInputElement>) => {
+                                            const v = e.target.value
+                                            setDraft((d) => ({
+                                              ...d,
+                                              formsSent: buildFormsSentValue(selected, v),
+                                            }))
+                                          }}
+                                          placeholder="Enter other..."
+                                          className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+                                        />
+                                      ) : null}
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      </div>
+                    )
+                  }
+
+                  if (col.type === 'checkbox') {
+                    return (
+                      <Checkbox
+                        key={col.key}
+                        label={col.label}
+                        checked={value === true}
+                        onChange={(checked) =>
+                          setDraft((d) => ({ ...d, [col.key]: checked }))
+                        }
+                      />
+                    )
+                  }
+
+                  const isInsurance =
+                    /insurance/i.test(col.key) || /insurance/i.test(col.label)
+
+                  if (isInsurance) {
+                    return (
+                      <Select
+                        key={col.key}
+                        label={col.label}
+                        value={typeof value === 'string' ? value : ''}
+                        options={INSURANCE_OPTIONS}
+                        onChange={(v) =>
+                          setDraft((d) => ({ ...d, [col.key]: v }))
+                        }
+                      />
+                    )
+                  }
+
+                  return (
+                    <Input
+                      key={col.key}
+                      label={col.label}
+                      type={
+                        col.type === 'date'
+                          ? 'date'
+                          : col.type === 'datetime'
+                            ? 'datetime-local'
+                            : 'text'
+                      }
+                      value={typeof value === 'string' ? value : ''}
+                      onChange={(v) => setDraft((d) => ({ ...d, [col.key]: v }))}
+                    />
+                  )
+                })}
+              </Section>
+
+              {saveError ? (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  {saveError}
+                </div>
+              ) : null}
+
+              <div className="flex items-center justify-end gap-2 border-t pt-4">
+                <button
+                  type="button"
+                  onClick={closeEditor}
+                  className="rounded-md border px-3 py-2 text-sm hover:bg-slate-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={saveDraft}
+                  className="rounded-md bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand/90"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function Select<T extends string>({
+  label,
+  value,
+  options,
+  optionLabel,
+  onChange,
+}: {
+  label: string
+  value: T
+  options: readonly T[]
+  optionLabel?: (value: T) => string
+  onChange: (next: T) => void
+}) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-xs font-medium text-slate-700">{label}</span>
+      <select
+        value={value}
+        onChange={(e: ChangeEvent<HTMLSelectElement>) => onChange(e.target.value as T)}
+        className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+      >
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {optionLabel ? optionLabel(o) : o}
+          </option>
+        ))}
+      </select>
+    </label>
+  )
+}
+
+
+function Th({
+  children,
+  className,
+  style,
+  dataColKey,
+}: {
+  children: ReactNode
+  className?: string
+  style?: CSSProperties
+  dataColKey?: string
+}) {
+  return (
+    <th
+      style={style}
+      data-col-key={dataColKey}
+      className={clsx(
+        'border-b px-3 py-2 text-left text-xs font-semibold text-slate-700',
+        className,
+      )}
+    >
+      {children}
+    </th>
+  )
+}
+
+function Td({
+  children,
+  className,
+  style,
+}: {
+  children: ReactNode
+  className?: string
+  style?: CSSProperties
+}) {
+  return (
+    <td
+      style={style}
+      className={clsx(
+        'border-b px-3 py-2 align-top text-sm text-slate-800',
+        className,
+      )}
+    >
+      {children}
+    </td>
+  )
+}
+
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section className="grid gap-3 rounded-md border bg-slate-50 p-3">
+      <div className="text-xs font-semibold text-slate-700">{title}</div>
+      <div className="grid gap-3">{children}</div>
+    </section>
+  )
+}
+
+function Input({
+  label,
+  type,
+  value,
+  onChange,
+}: {
+  label: string
+  type?: 'text' | 'date' | 'datetime-local' | 'tel'
+  value: string
+  onChange: (next: string) => void
+}) {
+  const isPhone = /phone/i.test(label)
+  return (
+    <label className="grid gap-1">
+      <span className="text-xs font-medium text-slate-700">{label}</span>
+      <input
+        type={isPhone ? 'tel' : (type ?? 'text')}
+        inputMode={isPhone ? 'numeric' : undefined}
+        pattern={isPhone ? '[0-9]*' : undefined}
+        maxLength={isPhone ? 10 : undefined}
+        value={value}
+        onChange={(e: ChangeEvent<HTMLInputElement>) => {
+          const next = e.target.value
+          onChange(isPhone ? next.replace(/\D+/g, '').slice(0, 10) : next)
+        }}
+        className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+      />
+    </label>
+  )
+}
+
+function Checkbox({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string
+  checked: boolean
+  onChange: (checked: boolean) => void
+}) {
+  return (
+    <label className="flex items-center gap-2">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e: ChangeEvent<HTMLInputElement>) => onChange(e.target.checked)}
+        className="h-4 w-4 rounded border-slate-300"
+      />
+      <span className="text-sm text-slate-800">{label}</span>
+    </label>
+  )
+}

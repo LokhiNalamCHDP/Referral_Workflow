@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/appheader.tsx","./src/lib/uselocalstoragestate.ts","./src/pages/notepadpage.tsx","./src/pages/referraltablepage.tsx","./src/pages/reportspage.tsx","./src/types/referral.ts"],"version":"5.9.3"}
