@@ -630,11 +630,14 @@ export default function ReferralTablePage({
     void (async () => {
       const isColonoscopy = activeSpecialty === 'Colonoscopy and EGD'
       const isGeneralSurgery = activeSpecialty === 'General Surgery'
+      const isSpineNeuroRajamand = activeSpecialty === 'Spine Neuro Rajamand'
 
       const query = isColonoscopy
         ? supabase.from('referrals_colonoscopy_egd').select('*').eq('record_status', 'active')
         : isGeneralSurgery
           ? supabase.from('referrals_general_surgery').select('*')
+          : isSpineNeuroRajamand
+            ? supabase.from('referrals_spine_neuro_rajamand').select('*').eq('record_status', 'active')
           : supabase
               .from('referrals')
               .select('id, archived, data, created_at')
@@ -657,6 +660,8 @@ export default function ReferralTablePage({
           ? mapColonoscopyEgdRecordToRow(r, schema)
           : isGeneralSurgery
             ? mapGeneralSurgeryRecordToRow(r, schema)
+            : isSpineNeuroRajamand
+              ? mapGeneralSurgeryRecordToRow(r, schema)
             : mapSupabaseRecordToRow(r, schema),
       )
 
@@ -902,6 +907,7 @@ export default function ReferralTablePage({
     void (async () => {
       const isColonoscopy = targetSpecialty === 'Colonoscopy and EGD'
       const isGeneralSurgery = targetSpecialty === 'General Surgery'
+      const isSpineNeuroRajamand = targetSpecialty === 'Spine Neuro Rajamand'
 
       const selectedProvider =
         typeof draft.referringProviderId === 'string' && draft.referringProviderId.trim()
@@ -1079,6 +1085,85 @@ export default function ReferralTablePage({
         return
       }
 
+      if (isSpineNeuroRajamand) {
+        const payload = {
+          date_referral_received: toIsoDateOnly(data.dateReferralReceived),
+          patient_name: String(data.patientName ?? ''),
+          dob: toIsoDateOnly(data.dob),
+          phone: String(data.phoneNumber ?? ''),
+          insurance: String(data.insurance ?? ''),
+          referral_provider: resolvedProviderText || null,
+          referral_provider_id: resolvedProviderId,
+          reason: String(data.reason ?? ''),
+          communication_1: toIsoDateOnly(data.firstPatientCommunication),
+          communication_2: toIsoDateOnly(data.secondPatientCommunication),
+          communication_3: toIsoDateOnly(data.thirdPatientCommunication),
+          appt_date_time: toIsoDateTime(data.apptDateTime),
+          notes: String(data.notes ?? ''),
+          record_status: 'active',
+          updated_at: new Date().toISOString(),
+        }
+
+        if (editingId) {
+          const { error } = await supabase
+            .from('referrals_spine_neuro_rajamand')
+            .update(payload)
+            .eq('id', Number(editingId))
+
+          if (error) {
+            setSaveError(error.message)
+            return
+          }
+
+          {
+            setRows((prev) =>
+              prev.map((r) =>
+                r.id === editingId
+                  ? {
+                      ...r,
+                      ...Object.fromEntries(
+                        Object.entries(data).map(([k, v]) => [k, typeof v === 'boolean' ? v : String(v ?? '')]),
+                      ),
+                      referringProvider: resolvedProviderText,
+                      referringProviderId: resolvedProviderId != null ? String(resolvedProviderId) : '',
+                      archived: false,
+                    }
+                  : r,
+              ),
+            )
+            closeEditor()
+          }
+          return
+        }
+
+        const { data: inserted, error } = await supabase
+          .from('referrals_spine_neuro_rajamand')
+          .insert(payload)
+          .select('id')
+          .single()
+
+        if (error) {
+          setSaveError(error.message)
+          return
+        }
+
+        if (inserted?.id != null) {
+          const nextRow: Row = { id: String(inserted.id), archived: false }
+          for (const col of editorSchema) {
+            const v = col.key === 'referringProvider' ? resolvedProviderText : data[col.key]
+            nextRow[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(v) : String(v ?? '')
+          }
+          nextRow.referringProvider = resolvedProviderText
+          nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
+          if (targetSpecialty === activeSpecialty) {
+            setRows((prev) => [nextRow, ...prev])
+          }
+          closeEditor()
+        }
+
+        return
+      }
+
       if (editingId) {
         const { error } = await supabase
           .from('referrals')
@@ -1131,6 +1216,7 @@ export default function ReferralTablePage({
     void (async () => {
       const isColonoscopy = activeSpecialty === 'Colonoscopy and EGD'
       const isGeneralSurgery = activeSpecialty === 'General Surgery'
+      const isSpineNeuroRajamand = activeSpecialty === 'Spine Neuro Rajamand'
       const { error } = isColonoscopy
         ? await supabase
             .from('referrals_colonoscopy_egd')
@@ -1141,6 +1227,11 @@ export default function ReferralTablePage({
               .from('referrals_general_surgery')
               .update({ record_status: 'archived', updated_at: new Date().toISOString() })
               .eq('id', Number(id))
+          : isSpineNeuroRajamand
+            ? await supabase
+                .from('referrals_spine_neuro_rajamand')
+                .update({ record_status: 'archived', updated_at: new Date().toISOString() })
+                .eq('id', Number(id))
         : await supabase
             .from('referrals')
             .update({ archived: true, updated_at: new Date().toISOString() })
