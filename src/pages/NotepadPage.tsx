@@ -41,7 +41,7 @@ export default function NotepadPage() {
             <button
               type="button"
               onClick={clearAll}
-              className="rounded-md border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+              className="rounded-md border bg-white px-3 py-2 text-sm text-slate-900 hover:bg-slate-50"
             >
               Clear All
             </button>
@@ -55,7 +55,7 @@ export default function NotepadPage() {
             <button
               type="button"
               onClick={copyToClipboard}
-              className="rounded-md border bg-white px-3 py-2 text-sm hover:bg-slate-50"
+              className="rounded-md border bg-white px-3 py-2 text-sm text-slate-900 hover:bg-slate-50"
             >
               {copied ? 'Copied' : 'Copy'}
             </button>

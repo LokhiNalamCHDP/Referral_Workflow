@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import { useNavigate } from 'react-router-dom'
 import { useSupabaseAuth } from '../lib/useSupabaseAuth'
+import { useAccess } from '../lib/AccessProvider'
+import { canAdmin } from '../lib/permissions'
 import convergenceLogo from '../assets/images/convergence-white.svg'
 
 export default function AppHeader({
@@ -17,6 +19,9 @@ export default function AppHeader({
   const [isNavOpen, setIsNavOpen] = useState(false)
   const navigate = useNavigate()
   const { session, signOut } = useSupabaseAuth()
+
+  const { access } = useAccess()
+  const isAdmin = useMemo(() => canAdmin(access?.role), [access?.role])
 
   if (!session) {
     return (
@@ -73,6 +78,16 @@ export default function AppHeader({
               >
                 Notepad
               </NavItem>
+              {isAdmin ? (
+                <NavItem
+                  onClick={() => {
+                    setIsNavOpen(false)
+                    navigate('/table-settings')
+                  }}
+                >
+                  Table settings
+                </NavItem>
+              ) : null}
             </div>
           ) : null}
 

@@ -4,16 +4,19 @@ import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import AuthGate from './components/AuthGate'
 import { SupabaseAuthProvider } from './lib/useSupabaseAuth'
+import { AccessProvider } from './lib/AccessProvider'
 import './styles.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <SupabaseAuthProvider>
-      <BrowserRouter>
-        <AuthGate>
-          <App />
-        </AuthGate>
-      </BrowserRouter>
+      <AccessProvider>
+        <BrowserRouter>
+          <AuthGate>
+            <App />
+          </AuthGate>
+        </BrowserRouter>
+      </AccessProvider>
     </SupabaseAuthProvider>
   </React.StrictMode>,
 )
