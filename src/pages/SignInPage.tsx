@@ -47,8 +47,8 @@ export default function SignInPage() {
 
       <main className="mx-auto flex max-w-[520px] flex-col gap-4 px-4 py-10">
         <div className="rounded-lg border bg-white p-5">
-          <div className="text-sm font-semibold text-slate-900">Sign in</div>
-          <div className="mt-1 text-xs text-slate-600">
+          <div className="text-center text-sm font-semibold text-slate-900">Sign in</div>
+          <div className="mt-1 text-center text-xs text-slate-600">
             {mode === 'forgot' ? 'Enter your email to reset your password.' : 'Use your email and password.'}
           </div>
 
@@ -137,7 +137,7 @@ export default function SignInPage() {
           </div>
         </div>
 
-        <div className="text-xs text-slate-600">
+        <div className="text-center text-xs text-slate-600">
           If you don’t have an account yet, contact admin:{' '}
           <a
             className="underline"

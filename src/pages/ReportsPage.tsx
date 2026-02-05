@@ -34,6 +34,16 @@ function isNonEmptyString(v: unknown): v is string {
   return typeof v === 'string' && v.trim().length > 0
 }
 
+function providerNameFromRow(row: AnyRow) {
+  const v =
+    row.referringProvider ??
+    row.referralProvider ??
+    row.referral_provider ??
+    row.referral_provider_name ??
+    row.referralProviderName
+  return isNonEmptyString(v) ? v.trim() : 'Unknown'
+}
+
 function parseDateInputValue(dateString: unknown) {
   if (!isNonEmptyString(dateString)) return null
   const d = new Date(dateString)
@@ -90,6 +100,18 @@ export default function ReportsPage() {
     setRowsError(null)
 
     void (async () => {
+      const allowed = new Set(SPECIALTIES as readonly string[])
+
+      const normalizeSpecialtyRecord = (r: any): AnyRow => {
+        return {
+          dateReferralReceived: r?.date_referral_received ?? null,
+          firstPatientCommunication: r?.communication_1 ?? null,
+          secondPatientCommunication: r?.communication_2 ?? null,
+          thirdPatientCommunication: r?.communication_3 ?? null,
+          referringProvider: r?.referral_provider ?? null,
+        }
+      }
+
       const { data, error } = await supabase
         .from('referrals')
         .select('specialty, data')
@@ -98,22 +120,81 @@ export default function ReportsPage() {
 
       if (!isMounted) return
 
-      if (error) {
+      if (!error) {
+        const next: RowWithMeta[] = (data ?? [])
+          .map((r: any) => {
+            const specialty = String(r.specialty)
+            if (!allowed.has(specialty)) return null
+            const row = (r.data ?? {}) as AnyRow
+            return { specialty: specialty as Specialty, row }
+          })
+          .filter((x): x is RowWithMeta => x !== null)
+
+        setAllRows(next)
+        setIsLoadingRows(false)
+        return
+      }
+
+      if (!String(error.message).toLowerCase().includes("could not find the table 'public.referrals'")) {
         setAllRows([])
         setRowsError(error.message)
         setIsLoadingRows(false)
         return
       }
 
-      const allowed = new Set(SPECIALTIES as readonly string[])
-      const next: RowWithMeta[] = (data ?? [])
-        .map((r: any) => {
-          const specialty = String(r.specialty)
-          if (!allowed.has(specialty)) return null
-          const row = (r.data ?? {}) as AnyRow
-          return { specialty: specialty as Specialty, row }
-        })
-        .filter((x): x is RowWithMeta => x !== null)
+      const [colonoscopyRes, generalRes, spineRes] = await Promise.all([
+        supabase
+          .from('referrals_colonoscopy_egd')
+          .select(
+            'date_referral_received, communication_1, communication_2, communication_3, referral_provider, created_at',
+          )
+          .eq('record_status', 'active')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('referrals_general_surgery')
+          .select(
+            'date_referral_received, communication_1, communication_2, communication_3, referral_provider, created_at',
+          )
+          .eq('record_status', 'active')
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('referrals_spine_neuro_rajamand')
+          .select(
+            'date_referral_received, communication_1, communication_2, communication_3, referral_provider, created_at',
+          )
+          .eq('record_status', 'active')
+          .order('created_at', { ascending: false }),
+      ])
+
+      if (!isMounted) return
+
+      const fallbackError = colonoscopyRes.error || generalRes.error || spineRes.error
+      if (fallbackError) {
+        setAllRows([])
+        setRowsError(fallbackError.message)
+        setIsLoadingRows(false)
+        return
+      }
+
+      const next: RowWithMeta[] = []
+
+      if (allowed.has('Colonoscopy and EGD')) {
+        for (const r of colonoscopyRes.data ?? []) {
+          next.push({ specialty: 'Colonoscopy and EGD', row: normalizeSpecialtyRecord(r) })
+        }
+      }
+
+      if (allowed.has('General Surgery')) {
+        for (const r of generalRes.data ?? []) {
+          next.push({ specialty: 'General Surgery', row: normalizeSpecialtyRecord(r) })
+        }
+      }
+
+      if (allowed.has('Spine Neuro Rajamand')) {
+        for (const r of spineRes.data ?? []) {
+          next.push({ specialty: 'Spine Neuro Rajamand', row: normalizeSpecialtyRecord(r) })
+        }
+      }
 
       setAllRows(next)
       setIsLoadingRows(false)
@@ -178,6 +259,23 @@ export default function ReportsPage() {
     entries.sort((a, b) => b[1] - a[1])
     return entries
   }, [referralsByCategory])
+
+  const providerCountItems = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const { row } of filteredRows) {
+      const name = providerNameFromRow(row)
+      counts[name] = (counts[name] ?? 0) + 1
+    }
+    const entries = Object.entries(counts)
+    entries.sort((a, b) => b[1] - a[1])
+    return entries.slice(0, 12)
+  }, [filteredRows])
+
+  const maxProviderCount = useMemo(() => {
+    let max = 0
+    for (const [, count] of providerCountItems) max = Math.max(max, count)
+    return max
+  }, [providerCountItems])
 
   const maxCategoryCount = useMemo(() => {
     let max = 0
@@ -320,11 +418,15 @@ export default function ReportsPage() {
             {weeklyTrendItems.length === 0 ? (
               <div className="mt-3 text-sm text-slate-600">No rows with valid dates match your filters.</div>
             ) : (
-              <div className="mt-3">
+              <div className="mt-3 grid gap-4 md:grid-cols-2 md:items-start">
                 <LineChart
                   points={weeklyTrendItems.map(([x, y]) => ({ xLabel: x, y }))}
                   height={260}
                   yMax={maxWeeklyCount}
+                />
+                <BarChart
+                  items={providerCountItems.map(([label, value]) => ({ label, value }))}
+                  height={260}
                 />
               </div>
             )}
