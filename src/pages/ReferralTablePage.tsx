@@ -483,6 +483,28 @@ function withReferringProviderPractice(schema: ColumnDef[]): ColumnDef[] {
   return [...schema.slice(0, idx), practiceCol, ...schema.slice(idx)]
 }
 
+function withReasonNotesAfterReferringProvider(schema: ColumnDef[]): ColumnDef[] {
+  const rpIdx = schema.findIndex(
+    (c) => c.key === 'referringProvider' || /referring\s*provider/i.test(c.label),
+  )
+  if (rpIdx < 0) return schema
+
+  const reasonCol = schema.find((c) => c.key === 'reason' || /^reason$/i.test(c.label.trim()))
+  const notesCol = schema.find((c) => c.key === 'notes' || /^notes$/i.test(c.label.trim()))
+  if (!reasonCol && !notesCol) return schema
+
+  const filtered = schema.filter((c) => c !== reasonCol && c !== notesCol)
+  const insertAt = filtered.findIndex(
+    (c) => c.key === 'referringProvider' || /referring\s*provider/i.test(c.label),
+  )
+  if (insertAt < 0) return schema
+
+  const extras: ColumnDef[] = []
+  if (reasonCol) extras.push(reasonCol)
+  if (notesCol) extras.push(notesCol)
+  return [...filtered.slice(0, insertAt + 1), ...extras, ...filtered.slice(insertAt + 1)]
+}
+
 export default function ReferralTablePage() {
   const navigate = useNavigate()
   const { session } = useSupabaseAuth()
@@ -491,7 +513,12 @@ export default function ReferralTablePage() {
 
   const [activeSpecialty, setActiveSpecialty] = useState<Specialty>(SPECIALTIES[0])
   const baseSchema = useMemo(
-    () => withReferringProviderPractice(SCHEMAS[activeSpecialty]),
+    () => {
+      const withPractice = withReferringProviderPractice(SCHEMAS[activeSpecialty])
+      return activeSpecialty === 'Colonoscopy and EGD'
+        ? withReasonNotesAfterReferringProvider(withPractice)
+        : withPractice
+    },
     [activeSpecialty],
   )
   const schema = useMemo(
@@ -876,7 +903,12 @@ export default function ReferralTablePage() {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editorSpecialty, setEditorSpecialty] = useState<Specialty>(SPECIALTIES[0])
   const editorSchema = useMemo(
-    () => withReferringProviderPractice(SCHEMAS[editorSpecialty]),
+    () => {
+      const withPractice = withReferringProviderPractice(SCHEMAS[editorSpecialty])
+      return editorSpecialty === 'Colonoscopy and EGD'
+        ? withReasonNotesAfterReferringProvider(withPractice)
+        : withPractice
+    },
     [editorSpecialty],
   )
   const [draft, setDraft] = useState<Record<string, RowValue>>(() =>
@@ -892,7 +924,14 @@ export default function ReferralTablePage() {
     setSaveError(null)
     setEditingId(null)
     setEditorSpecialty(activeSpecialty)
-    setDraft(createEmptyDraft(withReferringProviderPractice(SCHEMAS[activeSpecialty])))
+    {
+      const withPractice = withReferringProviderPractice(SCHEMAS[activeSpecialty])
+      const nextSchema =
+        activeSpecialty === 'Colonoscopy and EGD'
+          ? withReasonNotesAfterReferringProvider(withPractice)
+          : withPractice
+      setDraft(createEmptyDraft(nextSchema))
+    }
     setIsEditorOpen(true)
   }
 
