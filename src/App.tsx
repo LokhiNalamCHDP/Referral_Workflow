@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from 'react-router-dom'
 import NotepadPage from './pages/NotepadPage'
 import ReferralTablePage from './pages/ReferralTablePage'
 import ReportsPage from './pages/ReportsPage'
+import ReferralProviderUpdatesPage from './pages/ReferralProviderUpdatesPage'
 import AuthCallbackPage from './pages/AuthCallbackPage'
 import SetPasswordPage from './pages/SetPasswordPage'
 import TableSettingsPage from './pages/TableSettingsPage'
@@ -20,6 +21,7 @@ export default function App() {
       <Route path="/auth/callback" element={<AuthCallbackPage />} />
       <Route path="/set-password" element={<SetPasswordPage />} />
       <Route path="/" element={<ReferralTablePage />} />
+      <Route path="/referral-provider-updates" element={<ReferralProviderUpdatesPage />} />
       <Route path="/reports" element={<ReportsPage />} />
       <Route path="/notepad" element={<NotepadPage />} />
       <Route

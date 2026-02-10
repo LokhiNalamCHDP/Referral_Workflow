@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import clsx from 'clsx'
 import { useNavigate } from 'react-router-dom'
@@ -17,6 +17,8 @@ export default function AppHeader({
   right?: ReactNode
 }) {
   const [isNavOpen, setIsNavOpen] = useState(false)
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement | null>(null)
   const navigate = useNavigate()
   const { session, signOut } = useSupabaseAuth()
 
@@ -32,6 +34,33 @@ export default function AppHeader({
       </header>
     )
   }
+
+  const rawName =
+    typeof (session.user as any)?.user_metadata?.full_name === 'string'
+      ? String((session.user as any).user_metadata.full_name).trim()
+      : ''
+  const displayName = rawName || (session.user.email ?? 'User')
+  const initials = displayName
+    .split(/\s+/)
+    .filter((p) => p)
+    .slice(0, 2)
+    .map((p) => p[0]?.toUpperCase())
+    .join('')
+
+  const closeUserMenu = () => setIsUserMenuOpen(false)
+
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (!isUserMenuOpen) return
+      const el = userMenuRef.current
+      if (!el) return
+      if (e.target instanceof Node && el.contains(e.target)) return
+      setIsUserMenuOpen(false)
+    }
+
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [isUserMenuOpen])
 
   return (
     <header className="border-b bg-gray-900 text-white">
@@ -50,7 +79,14 @@ export default function AppHeader({
             </div>
           </button>
 
-          <img src={convergenceLogo} alt="Convergence" className="h-7 w-auto" />
+          <button
+            type="button"
+            onClick={() => navigate('/')}
+            aria-label="Go to referral tracker"
+            className="rounded-md p-1"
+          >
+            <img src={convergenceLogo} alt="Convergence" className="h-7 w-auto" />
+          </button>
 
           {isNavOpen ? (
             <div className="absolute left-0 top-12 z-50 w-64 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
@@ -61,6 +97,14 @@ export default function AppHeader({
                 }}
               >
                 Referral tracker spreadsheet
+              </NavItem>
+              <NavItem
+                onClick={() => {
+                  setIsNavOpen(false)
+                  navigate('/referral-provider-updates')
+                }}
+              >
+                Referral provider updates
               </NavItem>
               <NavItem
                 onClick={() => {
@@ -99,15 +143,48 @@ export default function AppHeader({
 
         <div className="flex items-center gap-3">
           {right ? right : null}
-          {session ? (
+          <div className="relative" ref={userMenuRef} data-user-menu-root>
             <button
               type="button"
-              onClick={() => void signOut()}
-              className="rounded-md border border-white/15 bg-white/5 px-3 py-2 text-sm text-white hover:bg-white/10"
+              onClick={() => setIsUserMenuOpen((v) => !v)}
+              aria-label="User menu"
+              className="flex items-center gap-2 rounded-full border border-white/15 bg-white/5 px-3 py-2 text-sm text-white"
             >
-              Logout
+              <div className="grid h-7 w-7 place-items-center rounded-full bg-brand text-xs font-semibold text-white">
+                {initials || 'U'}
+              </div>
+              <div className="max-w-[220px] truncate">{displayName}</div>
             </button>
-          ) : null}
+
+            {isUserMenuOpen ? (
+              <div className="absolute right-0 top-12 z-50 w-52 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeUserMenu()
+                    navigate('/set-password')
+                  }}
+                  className={clsx(
+                    'block w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50',
+                  )}
+                >
+                  Change password
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeUserMenu()
+                    void signOut()
+                  }}
+                  className={clsx(
+                    'block w-full px-4 py-2 text-left text-sm text-slate-800 hover:bg-slate-50',
+                  )}
+                >
+                  Logout
+                </button>
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
     </header>

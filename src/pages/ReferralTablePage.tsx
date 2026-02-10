@@ -27,7 +27,7 @@ type Row = {
 type ReferralProviderOption = {
   id: string
   referral_provider: string
-  grp_org_provider: string | null
+  provider_practice: string | null
 }
 
 const OTHER_PROVIDER_VALUE = '__other__'
@@ -63,6 +63,35 @@ const INSURANCE_OPTIONS = [
 ] as const
 
 const FORM_RECEIVED_OPTIONS = ['', 'Yes- Direct', 'Yes- Consult', 'No'] as const
+
+const STATUS_OPTIONS = [
+  '',
+  'NEW_REFERRAL',
+  'IN_PROGRESS',
+  'APPT_SCHEDULED',
+  'NO_RESPONSE_3_ATTEMPTS',
+  'NOT_INTERESTED',
+  'CANCELLED/ NO_SHOW',
+] as const
+
+function statusLabel(value: string) {
+  switch (value) {
+    case 'NEW_REFERRAL':
+      return 'New referral'
+    case 'IN_PROGRESS':
+      return 'In progress'
+    case 'APPT_SCHEDULED':
+      return 'Appt scheduled'
+    case 'NO_RESPONSE_3_ATTEMPTS':
+      return 'No response (3 attempts)'
+    case 'NOT_INTERESTED':
+      return 'Not interested'
+    case 'CANCELLED/ NO_SHOW':
+      return 'Cancelled / No show'
+    default:
+      return value
+  }
+}
 
 type Specialty = (typeof SPECIALTIES)[number]
 
@@ -505,22 +534,52 @@ function withReasonNotesAfterReferringProvider(schema: ColumnDef[]): ColumnDef[]
   return [...filtered.slice(0, insertAt + 1), ...extras, ...filtered.slice(insertAt + 1)]
 }
 
+function withStatusEmailSentAfterApptDateTime(schema: ColumnDef[]): ColumnDef[] {
+  const alreadyHasStatus = schema.some((c) => c.key === 'status')
+  const alreadyHasEmailSent = schema.some((c) => c.key === 'emailSent')
+  if (alreadyHasStatus && alreadyHasEmailSent) return schema
+
+  const idx = schema.findIndex((c) => c.key === 'apptDateTime')
+  if (idx < 0) return schema
+
+  const additions: ColumnDef[] = []
+  if (!alreadyHasStatus) {
+    additions.push({ key: 'status', label: 'Status', type: 'text' })
+  }
+  if (!alreadyHasEmailSent) {
+    additions.push({ key: 'emailSent', label: 'Email Sent', type: 'checkbox' })
+  }
+
+  return [...schema.slice(0, idx + 1), ...additions, ...schema.slice(idx + 1)]
+}
+
+function withStatusAfterApptDateTime(schema: ColumnDef[]): ColumnDef[] {
+  const alreadyHasStatus = schema.some((c) => c.key === 'status')
+  if (alreadyHasStatus) return schema
+
+  const idx = schema.findIndex((c) => c.key === 'apptDateTime')
+  if (idx < 0) return schema
+
+  const statusCol: ColumnDef = { key: 'status', label: 'Status', type: 'text' }
+  return [...schema.slice(0, idx + 1), statusCol, ...schema.slice(idx + 1)]
+}
+
 export default function ReferralTablePage() {
   const navigate = useNavigate()
   const { session } = useSupabaseAuth()
-  const { access } = useAccess()
-  const canEditRows = canEdit(access?.role)
+  const access = useAccess()
+  const canEditRows = canEdit(access.access?.role)
 
   const [activeSpecialty, setActiveSpecialty] = useState<Specialty>(SPECIALTIES[0])
-  const baseSchema = useMemo(
-    () => {
-      const withPractice = withReferringProviderPractice(SCHEMAS[activeSpecialty])
-      return activeSpecialty === 'Colonoscopy and EGD'
+
+  const baseSchema = useMemo(() => {
+    const withPractice = withReferringProviderPractice(SCHEMAS[activeSpecialty])
+    const withReasonNotes =
+      activeSpecialty === 'Colonoscopy and EGD'
         ? withReasonNotesAfterReferringProvider(withPractice)
         : withPractice
-    },
-    [activeSpecialty],
-  )
+    return withStatusEmailSentAfterApptDateTime(withReasonNotes)
+  }, [activeSpecialty])
   const schema = useMemo(
     () => baseSchema,
     [baseSchema],
@@ -543,7 +602,7 @@ export default function ReferralTablePage() {
         const p = providerOptions.find((x) => String(x.id) === String(providerId))
         if (!p) return r
         const providerName = (p.referral_provider ?? '').trim()
-        const practice = (p.grp_org_provider ?? '').trim()
+        const practice = (p.provider_practice ?? '').trim()
         const practiceSame = String(r[REFERRING_PROVIDER_PRACTICE_KEY] ?? '') === practice
         const providerSame = String(r.referringProvider ?? '') === providerName
         if (practiceSame && providerSame) return r
@@ -558,7 +617,7 @@ export default function ReferralTablePage() {
     void (async () => {
       const { data, error } = await supabase
         .from('referral_providers')
-        .select('id, referral_provider, grp_org_provider')
+        .select('id, referral_provider, provider_practice')
         .order('referral_provider', { ascending: true })
 
       if (!isMounted) return
@@ -638,6 +697,8 @@ export default function ReferralTablePage() {
       secondPatientCommunication: r.communication_2,
       thirdPatientCommunication: r.communication_3,
       apptDateTime: r.appt_date_time,
+      status: r.status,
+      emailSent: r.email_sent_at != null,
       notes: r.notes,
     }
 
@@ -672,6 +733,8 @@ export default function ReferralTablePage() {
       secondPatientCommunication: r.communication_2,
       thirdPatientCommunication: r.communication_3,
       apptDateTime: r.appt_date_time,
+      status: r.status,
+      emailSent: r.email_sent_at != null,
       notes: r.notes,
     }
 
@@ -697,7 +760,10 @@ export default function ReferralTablePage() {
     }
 
     for (const col of schemaForRow) {
-      const raw = payload?.[col.key]
+      const raw =
+        col.key === 'emailSent'
+          ? (payload as any)?.email_sent_at != null
+          : payload?.[col.key]
       out[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(raw) : String(raw ?? '')
     }
 
@@ -745,9 +811,9 @@ export default function ReferralTablePage() {
           ? mapColonoscopyEgdRecordToRow(r, baseSchema)
           : isGeneralSurgery
             ? mapGeneralSurgeryRecordToRow(r, baseSchema)
-            : isSpineNeuroRajamand
-              ? mapGeneralSurgeryRecordToRow(r, baseSchema)
-            : mapSupabaseRecordToRow(r, baseSchema),
+          : isSpineNeuroRajamand
+            ? mapGeneralSurgeryRecordToRow(r, baseSchema)
+          : mapSupabaseRecordToRow(r, baseSchema),
       )
 
       setRows(next)
@@ -905,9 +971,11 @@ export default function ReferralTablePage() {
   const editorSchema = useMemo(
     () => {
       const withPractice = withReferringProviderPractice(SCHEMAS[editorSpecialty])
-      return editorSpecialty === 'Colonoscopy and EGD'
-        ? withReasonNotesAfterReferringProvider(withPractice)
-        : withPractice
+      const withReasonNotes =
+        editorSpecialty === 'Colonoscopy and EGD'
+          ? withReasonNotesAfterReferringProvider(withPractice)
+          : withPractice
+      return withStatusAfterApptDateTime(withReasonNotes)
     },
     [editorSpecialty],
   )
@@ -926,10 +994,11 @@ export default function ReferralTablePage() {
     setEditorSpecialty(activeSpecialty)
     {
       const withPractice = withReferringProviderPractice(SCHEMAS[activeSpecialty])
-      const nextSchema =
+      const nextSchemaBase =
         activeSpecialty === 'Colonoscopy and EGD'
           ? withReasonNotesAfterReferringProvider(withPractice)
           : withPractice
+      const nextSchema = withStatusAfterApptDateTime(nextSchemaBase)
       setDraft(createEmptyDraft(nextSchema))
     }
     setIsEditorOpen(true)
@@ -1045,6 +1114,32 @@ export default function ReferralTablePage() {
       return
     }
 
+    const nextStatusInput = typeof draft.status === 'string' ? draft.status.trim() : ''
+    const nextApptDateTime = typeof draft.apptDateTime === 'string' ? draft.apptDateTime.trim() : ''
+    const nextThirdCommunication =
+      typeof draft.thirdPatientCommunication === 'string' ? draft.thirdPatientCommunication.trim() : ''
+
+    if (nextStatusInput === 'APPT_SCHEDULED' && schemaKeys.has('apptDateTime') && !nextApptDateTime) {
+      const label = editorSchema.find((c) => c.key === 'apptDateTime')?.label ?? 'Appt date/time'
+      setSaveError(`${label} must be set when Status is Appt scheduled`)
+      return
+    }
+
+    if (nextStatusInput === 'NO_RESPONSE_3_ATTEMPTS') {
+      if (schemaKeys.has('thirdPatientCommunication') && !nextThirdCommunication) {
+        const label =
+          editorSchema.find((c) => c.key === 'thirdPatientCommunication')?.label ??
+          '3rd patient communication'
+        setSaveError(`${label} must be set when Status is No response (3 attempts)`)
+        return
+      }
+      if (schemaKeys.has('apptDateTime') && nextApptDateTime) {
+        const label = editorSchema.find((c) => c.key === 'apptDateTime')?.label ?? 'Appt date/time'
+        setSaveError(`${label} must be empty when Status is No response (3 attempts)`)
+        return
+      }
+    }
+
     const data: Record<string, unknown> = {}
     for (const col of editorSchema) {
       if (col.key === REFERRING_PROVIDER_PRACTICE_KEY) continue
@@ -1063,6 +1158,10 @@ export default function ReferralTablePage() {
     const targetSpecialty = editingId ? activeSpecialty : editorSpecialty
     const archived = editingRow?.archived === true
 
+    const nextStatus = typeof data.status === 'string' ? data.status.trim() : ''
+    const prevStatus = typeof editingRow?.status === 'string' ? editingRow.status.trim() : ''
+    const shouldTouchStatusUpdatedAt = Boolean(nextStatus) && (!editingId || nextStatus !== prevStatus)
+
     void (async () => {
       const isColonoscopy = targetSpecialty === 'Colonoscopy and EGD'
       const isGeneralSurgery = targetSpecialty === 'General Surgery'
@@ -1078,7 +1177,7 @@ export default function ReferralTablePage() {
 
       const resolvedProviderText = selectedProvider ? providerLabel(selectedProvider) : String(data.referringProvider ?? '')
       const resolvedProviderId = selectedProvider ? Number(selectedProvider.id) : null
-      const resolvedProviderPractice = selectedProvider ? (selectedProvider.grp_org_provider ?? '') : ''
+      const resolvedProviderPractice = selectedProvider ? (selectedProvider.provider_practice ?? '') : ''
 
       if (isColonoscopy) {
         const payload = {
@@ -1090,6 +1189,9 @@ export default function ReferralTablePage() {
           referral_provider: resolvedProviderText || null,
           referral_provider_id: resolvedProviderId,
           reason: String(data.reason ?? ''),
+          status:
+            typeof data.status === 'string' && data.status.trim() ? data.status.trim() : null,
+          ...(shouldTouchStatusUpdatedAt ? { status_updated_at: new Date().toISOString() } : {}),
           forms_sent: data.formsSent === true,
           form_received:
             typeof data.formReceived === 'string' && data.formReceived.trim()
@@ -1178,6 +1280,9 @@ export default function ReferralTablePage() {
           referral_provider: resolvedProviderText || null,
           referral_provider_id: resolvedProviderId,
           reason: String(data.reason ?? ''),
+          status:
+            typeof data.status === 'string' && data.status.trim() ? data.status.trim() : null,
+          ...(shouldTouchStatusUpdatedAt ? { status_updated_at: new Date().toISOString() } : {}),
           communication_1: toIsoDateTime(data.firstPatientCommunication),
           communication_2: toIsoDateTime(data.secondPatientCommunication),
           communication_3: toIsoDateTime(data.thirdPatientCommunication),
@@ -1456,7 +1561,11 @@ export default function ReferralTablePage() {
     const firstSet = new Set(first.map((c) => c.key))
     const middle = reasonNotesRemoved.filter((c) => !firstSet.has(c.key))
 
-    return [...first, ...middle, ...(reason ? [reason] : []), ...(notes ? [notes] : [])]
+    const extras: ColumnDef[] = []
+    if (reason) extras.push(reason)
+    if (notes) extras.push(notes)
+
+    return [...first, ...extras, ...middle]
   }
 
   const orderedSchema = useMemo(() => orderSchema(schema), [schema])
@@ -1533,12 +1642,6 @@ export default function ReferralTablePage() {
               Add Referral
             </button>
 
-            <div className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
-              <div className="grid h-7 w-7 place-items-center rounded-full bg-brand text-xs font-semibold text-white">
-                LN
-              </div>
-              <div className="whitespace-nowrap">Lokhi Nalam</div>
-            </div>
           </>
         }
       />
@@ -1860,13 +1963,17 @@ export default function ReferralTablePage() {
                                   const p = providerOptions.find((x) => String(x.id) === String(providerId))
                                   if (!p) return ''
                                   if (col.key === REFERRING_PROVIDER_PRACTICE_KEY) {
-                                    return (p.grp_org_provider ?? '').trim()
+                                    return (p.provider_practice ?? '').trim()
                                   }
                                   return (p.referral_provider ?? '').trim()
                                 }
 
                                 if (isDateTimeColumn(col)) {
                                   return formatDateTimeDisplay(r[col.key])
+                                }
+
+                                if (col.key === 'status') {
+                                  return statusLabel(String(r[col.key] ?? ''))
                                 }
 
                                 return String(r[col.key] ?? '')
@@ -1967,7 +2074,7 @@ export default function ReferralTablePage() {
                     const practiceOptions = Array.from(
                       new Set(
                         providerOptions
-                          .map((p) => (p.grp_org_provider ?? '').trim())
+                          .map((p) => (p.provider_practice ?? '').trim())
                           .filter((v) => v.length > 0),
                       ),
                     ).sort((a, b) => a.localeCompare(b))
@@ -1980,7 +2087,7 @@ export default function ReferralTablePage() {
                         : practiceOptions
 
                     const filteredProviderOptions = providerPractice
-                      ? providerOptions.filter((p) => (p.grp_org_provider ?? '').trim() === providerPractice)
+                      ? providerOptions.filter((p) => (p.provider_practice ?? '').trim() === providerPractice)
                       : []
 
                     const providerIdOptions = [
@@ -2062,7 +2169,7 @@ export default function ReferralTablePage() {
                                 ...d,
                                 referringProviderId: v,
                                 referringProvider: picked ? providerLabel(picked) : '',
-                                [REFERRING_PROVIDER_PRACTICE_KEY]: picked ? (picked.grp_org_provider ?? '') : '',
+                                [REFERRING_PROVIDER_PRACTICE_KEY]: picked ? (picked.provider_practice ?? '') : '',
                               }))
                             }}
                           />
@@ -2086,6 +2193,19 @@ export default function ReferralTablePage() {
                         label={col.label}
                         value={typeof value === 'string' ? value : ''}
                         options={FORM_RECEIVED_OPTIONS}
+                        onChange={(v) => setDraft((d) => ({ ...d, [col.key]: v }))}
+                      />
+                    )
+                  }
+
+                  if (col.key === 'status') {
+                    return (
+                      <Select
+                        key={col.key}
+                        label={col.label}
+                        value={typeof value === 'string' ? value : ''}
+                        options={STATUS_OPTIONS as unknown as string[]}
+                        optionLabel={(v) => statusLabel(String(v ?? ''))}
                         onChange={(v) => setDraft((d) => ({ ...d, [col.key]: v }))}
                       />
                     )
