@@ -18,6 +18,7 @@ export default function AppHeader({
 }) {
   const [isNavOpen, setIsNavOpen] = useState(false)
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
+  const navMenuRef = useRef<HTMLDivElement | null>(null)
   const userMenuRef = useRef<HTMLDivElement | null>(null)
   const navigate = useNavigate()
   const { session, signOut } = useSupabaseAuth()
@@ -62,78 +63,93 @@ export default function AppHeader({
     return () => document.removeEventListener('mousedown', onMouseDown)
   }, [isUserMenuOpen])
 
+  useEffect(() => {
+    function onMouseDown(e: MouseEvent) {
+      if (!isNavOpen) return
+      const el = navMenuRef.current
+      if (!el) return
+      if (e.target instanceof Node && el.contains(e.target)) return
+      setIsNavOpen(false)
+    }
+
+    document.addEventListener('mousedown', onMouseDown)
+    return () => document.removeEventListener('mousedown', onMouseDown)
+  }, [isNavOpen])
+
   return (
     <header className="border-b bg-gray-900 text-white">
       <div className="mx-auto flex items-center justify-between gap-3 px-4 py-4">
         <div className="relative flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setIsNavOpen((v) => !v)}
-            aria-label="Open menu"
-            className="rounded-md border border-white/15 bg-white/5 p-2 text-white hover:bg-white/10"
-          >
-            <div className="grid gap-1">
-              <span className="block h-0.5 w-5 bg-white" />
-              <span className="block h-0.5 w-5 bg-white" />
-              <span className="block h-0.5 w-5 bg-white" />
-            </div>
-          </button>
+          <div className="relative" ref={navMenuRef}>
+            <button
+              type="button"
+              onClick={() => setIsNavOpen((v) => !v)}
+              aria-label="Open menu"
+              className="flex h-9 w-9 items-center justify-center rounded-md border border-white/15 bg-white/5 text-white hover:bg-white/10"
+            >
+              <div className="grid gap-1">
+                <span className="block h-0.5 w-5 bg-white" />
+                <span className="block h-0.5 w-5 bg-white" />
+                <span className="block h-0.5 w-5 bg-white" />
+              </div>
+            </button>
+
+            {isNavOpen ? (
+              <div className="absolute left-0 top-12 z-50 w-64 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
+                <NavItem
+                  onClick={() => {
+                    setIsNavOpen(false)
+                    navigate('/')
+                  }}
+                >
+                  Referral tracker spreadsheet
+                </NavItem>
+                <NavItem
+                  onClick={() => {
+                    setIsNavOpen(false)
+                    navigate('/referral-provider-updates')
+                  }}
+                >
+                  Referral provider updates
+                </NavItem>
+                <NavItem
+                  onClick={() => {
+                    setIsNavOpen(false)
+                    navigate('/reports')
+                  }}
+                >
+                  Reports
+                </NavItem>
+                <NavItem
+                  onClick={() => {
+                    setIsNavOpen(false)
+                    navigate('/notepad')
+                  }}
+                >
+                  Notepad
+                </NavItem>
+                {isAdmin ? (
+                  <NavItem
+                    onClick={() => {
+                      setIsNavOpen(false)
+                      navigate('/table-settings')
+                    }}
+                  >
+                    Table settings
+                  </NavItem>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
 
           <button
             type="button"
             onClick={() => navigate('/')}
             aria-label="Go to referral tracker"
-            className="rounded-md p-1"
+            className="flex h-9 items-center justify-center rounded-md px-1"
           >
             <img src={convergenceLogo} alt="Convergence" className="h-7 w-auto" />
           </button>
-
-          {isNavOpen ? (
-            <div className="absolute left-0 top-12 z-50 w-64 overflow-hidden rounded-md border border-slate-200 bg-white shadow-lg">
-              <NavItem
-                onClick={() => {
-                  setIsNavOpen(false)
-                  navigate('/')
-                }}
-              >
-                Referral tracker spreadsheet
-              </NavItem>
-              <NavItem
-                onClick={() => {
-                  setIsNavOpen(false)
-                  navigate('/referral-provider-updates')
-                }}
-              >
-                Referral provider updates
-              </NavItem>
-              <NavItem
-                onClick={() => {
-                  setIsNavOpen(false)
-                  navigate('/reports')
-                }}
-              >
-                Reports
-              </NavItem>
-              <NavItem
-                onClick={() => {
-                  setIsNavOpen(false)
-                  navigate('/notepad')
-                }}
-              >
-                Notepad
-              </NavItem>
-              {isAdmin ? (
-                <NavItem
-                  onClick={() => {
-                    setIsNavOpen(false)
-                    navigate('/table-settings')
-                  }}
-                >
-                  Table settings
-                </NavItem>
-              ) : null}
-            </div>
-          ) : null}
 
           <div>
             <h1 className="text-lg font-semibold">{title}</h1>
