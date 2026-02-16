@@ -23,8 +23,9 @@ export default function SignInPage() {
           setError('Email is required')
           return
         }
+        const redirectTo = `${window.location.origin}/auth/callback?type=recovery`
         const { error } = await supabase.auth.resetPasswordForEmail(trimmed, {
-          redirectTo: 'http://localhost:5173/auth/callback',
+          redirectTo,
         })
         if (error) {
           setError(error.message)

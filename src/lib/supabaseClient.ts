@@ -7,4 +7,14 @@ if (!supabaseUrl || !supabaseAnonKey) {
   throw new Error('Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY')
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    flowType: 'pkce',
+  },
+})
+
+if (import.meta.env.DEV) {
+  ;(window as any).supabase = supabase
+  ;(window as any).supabaseUrl = supabaseUrl
+  ;(window as any).supabaseAnonKey = supabaseAnonKey
+}

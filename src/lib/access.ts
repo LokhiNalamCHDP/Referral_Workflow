@@ -12,8 +12,11 @@ export async function fetchUserAccess(): Promise<UserAccess | null> {
     .from('user_access')
     .select('role, location')
     .eq('user_id', userId)
-    .single()
+    .maybeSingle()
 
-  if (error) return null
+  if (error) {
+    if ((error as any)?.code === 'PGRST116') return null
+    return null
+  }
   return data as UserAccess
 }

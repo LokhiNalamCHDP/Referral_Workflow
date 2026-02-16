@@ -19,6 +19,7 @@ export default function App() {
   return (
     <Routes>
       <Route path="/auth/callback" element={<AuthCallbackPage />} />
+      <Route path="/auth_callback" element={<AuthCallbackPage />} />
       <Route path="/set-password" element={<SetPasswordPage />} />
       <Route path="/" element={<ReferralTablePage />} />
       <Route path="/referral-provider-updates" element={<ReferralProviderUpdatesPage />} />

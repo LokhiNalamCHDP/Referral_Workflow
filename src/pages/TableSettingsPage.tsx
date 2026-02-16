@@ -37,6 +37,7 @@ export default function TableSettingsPage() {
   const [editProviderEmailDraft, setEditProviderEmailDraft] = useState('')
   const [editProviderAddressDraft, setEditProviderAddressDraft] = useState('')
   const [editProviderActiveDraft, setEditProviderActiveDraft] = useState(true)
+  const [editProviderModalError, setEditProviderModalError] = useState<string | null>(null)
 
   const [insurances, setInsurances] = useState<InsuranceRow[]>([])
   const [originalInsuranceActive, setOriginalInsuranceActive] = useState<Record<string, boolean>>({})
@@ -49,12 +50,14 @@ export default function TableSettingsPage() {
   const [originalProviders, setOriginalProviders] = useState<Record<string, ProviderRow>>({})
   const [providerError, setProviderError] = useState<string | null>(null)
   const [providerSuccess, setProviderSuccess] = useState<string | null>(null)
+  const [savingProviderId, setSavingProviderId] = useState<string | null>(null)
 
   const [newProviderPracticeExisting, setNewProviderPracticeExisting] = useState('')
   const [newProviderNameDraft, setNewProviderNameDraft] = useState('')
   const [newProviderPhoneDraft, setNewProviderPhoneDraft] = useState('')
   const [newProviderEmailDraft, setNewProviderEmailDraft] = useState('')
   const [newProviderAddressDraft, setNewProviderAddressDraft] = useState('')
+  const [addProviderModalError, setAddProviderModalError] = useState<string | null>(null)
 
   const [newPracticeNameDraft, setNewPracticeNameDraft] = useState('')
 
@@ -198,9 +201,6 @@ export default function TableSettingsPage() {
     const practice = newProviderPracticeExisting.trim()
     if (!practice) return false
 
-    const email = newProviderEmailDraft.trim()
-    if (!email) return false
-
     const existing = new Set(
       providers
         .filter((p) => p.provider.trim() && p.provider.trim() !== PRACTICE_PLACEHOLDER_PROVIDER)
@@ -213,6 +213,7 @@ export default function TableSettingsPage() {
     if (!canAddProvider) return
     setProviderError(null)
     setProviderSuccess(null)
+    setAddProviderModalError(null)
 
     const practice = newProviderPracticeExisting.trim()
     const providerName = newProviderNameDraft.trim()
@@ -221,7 +222,7 @@ export default function TableSettingsPage() {
     const address = newProviderAddressDraft.trim()
 
     if (!contactEmail) {
-      setProviderError('Email is required')
+      setAddProviderModalError('Email is required')
       return
     }
 
@@ -263,6 +264,7 @@ export default function TableSettingsPage() {
   function openEditProvider(p: ProviderRow) {
     setProviderError(null)
     setProviderSuccess(null)
+    setEditProviderModalError(null)
     setEditProviderId(p.id)
     setEditProviderPractice(p.practice)
     setEditProviderNameDraft(p.provider)
@@ -277,7 +279,7 @@ export default function TableSettingsPage() {
     if (!editProviderId) return
     const contactEmail = editProviderEmailDraft.trim()
     if (!contactEmail) {
-      setProviderError('Email is required')
+      setEditProviderModalError('Email is required')
       return
     }
 
@@ -372,6 +374,79 @@ export default function TableSettingsPage() {
     setProviders((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)))
   }
 
+  function isProviderDirty(p: ProviderRow) {
+    const original = originalProviders[p.id]
+    if (!original) return false
+    return (
+      p.practice !== original.practice ||
+      p.provider !== original.provider ||
+      p.contactPhone !== original.contactPhone ||
+      p.contactEmail !== original.contactEmail ||
+      p.address !== original.address ||
+      p.isActive !== original.isActive
+    )
+  }
+
+  async function saveProviderRow(id: string) {
+    if (!id) return
+    if (savingProviderId) return
+
+    const row = filteredProviders.find((x) => x.id === id)
+    if (!row) return
+
+    if (!isProviderDirty(row)) return
+
+    setProviderError(null)
+    setProviderSuccess(null)
+    setSavingProviderId(id)
+
+    try {
+      const original = originalProviders[id]
+      const changes: Record<string, { from: any; to: any }> = {}
+      if (original) {
+        if (row.practice !== original.practice) changes.provider_practice = { from: original.practice, to: row.practice }
+        if (row.provider !== original.provider) changes.referral_provider = { from: original.provider, to: row.provider }
+        if (row.contactPhone !== original.contactPhone) changes.contact_phone = { from: original.contactPhone, to: row.contactPhone }
+        if (row.contactEmail !== original.contactEmail) changes.contact_email = { from: original.contactEmail, to: row.contactEmail }
+        if (row.address !== original.address) changes.address = { from: original.address, to: row.address }
+        if (row.isActive !== original.isActive) changes.is_active = { from: original.isActive, to: row.isActive }
+      }
+
+      const nowIso = new Date().toISOString()
+      const editHistoryEntry = {
+        at: nowIso,
+        action: 'update',
+        changes,
+      }
+
+      const priorHistory = (original?.editHistory ?? row.editHistory ?? []) as any[]
+      const nextHistory = [...priorHistory, editHistoryEntry]
+
+      const { error } = await supabase
+        .from('referral_providers')
+        .update({
+          provider_practice: row.practice,
+          referral_provider: row.provider,
+          contact_phone: row.contactPhone || null,
+          contact_email: row.contactEmail.trim() || null,
+          address: row.address || null,
+          is_active: row.isActive,
+          edit_history: nextHistory,
+        })
+        .eq('id', id)
+
+      if (error) throw error
+
+      setProviderSuccess('Saved')
+      await refreshProviders()
+    } catch (e: any) {
+      setProviderError(e?.message ?? 'Save failed')
+      await refreshProviders()
+    } finally {
+      setSavingProviderId(null)
+    }
+  }
+
   const dirtyProviderIds = useMemo(() => {
     const dirty: string[] = []
     for (const p of filteredProviders) {
@@ -391,14 +466,8 @@ export default function TableSettingsPage() {
     return dirty
   }, [filteredProviders, originalProviders])
 
-  const providerEmailMissingCount = useMemo(() => {
-    return filteredProviders.filter((p) => !p.contactEmail.trim()).length
-  }, [filteredProviders])
-
-  const canSaveProviderChanges = dirtyProviderIds.length > 0 && providerEmailMissingCount === 0
-
   async function saveProviderChanges() {
-    if (!canSaveProviderChanges) return
+    if (!dirtyProviderIds.length) return
     setProviderError(null)
     setProviderSuccess(null)
 
@@ -719,6 +788,11 @@ export default function TableSettingsPage() {
                       </div>
 
                       <div className="grid gap-2">
+                        {editProviderModalError ? (
+                          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                            {editProviderModalError}
+                          </div>
+                        ) : null}
                         <div className="text-xs font-semibold text-slate-700">Practice</div>
                         <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-700">
                           {editProviderPractice}
@@ -847,14 +921,6 @@ export default function TableSettingsPage() {
                       >
                         Refresh
                       </button>
-                      <button
-                        type="button"
-                        onClick={saveProviderChanges}
-                        disabled={!canSaveProviderChanges}
-                        className="rounded-md bg-emerald-600 px-3 py-2 text-sm font-medium text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Save provider changes
-                      </button>
                     </div>
 
                     <div className="max-h-[520px] overflow-auto rounded-md border">
@@ -899,6 +965,18 @@ export default function TableSettingsPage() {
                                 <td className="border-b px-3 py-2 align-top">
                                   <button
                                     type="button"
+                                    onClick={() => void saveProviderRow(p.id)}
+                                    disabled={!isProviderDirty(p) || savingProviderId === p.id}
+                                    className={
+                                      !isProviderDirty(p) || savingProviderId === p.id
+                                        ? 'mr-2 rounded-md bg-emerald-200 px-3 py-1 text-sm font-medium text-white opacity-80'
+                                        : 'mr-2 rounded-md bg-emerald-600 px-3 py-1 text-sm font-medium text-white hover:bg-emerald-700'
+                                    }
+                                  >
+                                    {savingProviderId === p.id ? 'Saving…' : 'Save'}
+                                  </button>
+                                  <button
+                                    type="button"
                                     onClick={() => openEditProvider(p)}
                                     className="rounded-md border bg-white px-3 py-1 text-sm hover:bg-slate-50"
                                   >
@@ -929,6 +1007,11 @@ export default function TableSettingsPage() {
                       </div>
 
                       <div className="grid gap-2">
+                        {addProviderModalError ? (
+                          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                            {addProviderModalError}
+                          </div>
+                        ) : null}
                         <div className="text-xs font-semibold text-slate-700">Practice</div>
                         <div className="rounded-md border bg-slate-50 px-3 py-2 text-sm text-slate-700">
                           {existingPracticeSelected}
@@ -1003,9 +1086,6 @@ export default function TableSettingsPage() {
 
                 {providerError ? <div className="text-sm text-red-600">{providerError}</div> : null}
                 {providerSuccess ? <div className="text-sm text-emerald-700">{providerSuccess}</div> : null}
-                {providerEmailMissingCount > 0 ? (
-                  <div className="text-sm text-red-600">Email is required for all providers.</div>
-                ) : null}
               </div>
             </div>
           ) : null}
