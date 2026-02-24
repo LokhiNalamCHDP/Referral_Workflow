@@ -95,6 +95,21 @@ function statusLabel(value: string) {
 
 type Specialty = (typeof SPECIALTIES)[number]
 
+const SPECIALTY_TABLES: Record<Specialty, string> = {
+  'Colonoscopy and EGD': 'referrals_colonoscopy_egd',
+  'General Surgery': 'referrals_general_surgery',
+  'Spine Neuro Rajamand': 'referrals_spine_neuro_rajamand',
+  Ortho: 'referrals_ortho',
+  Ophthalmology: 'referrals_ophthalmology',
+  'IR Carlevato': 'referrals_ir_carlevato',
+  'Heme Onc Rice': 'referrals_heme_onc_rice',
+  Infusion: 'referrals_infusion',
+  "Women's Health": 'referrals_womens_health',
+  'Cardio Deschutter': 'referrals_cardio_deschutter',
+  'Singh Cancellations': 'referrals_singh_cancellations',
+  'Hernia Sx Waitlist': 'referrals_hernia_sx_waitlist',
+}
+
 function toIsoDateOnly(value: unknown) {
   if (typeof value !== 'string' || !value.trim()) return null
   const d = new Date(value)
@@ -536,8 +551,9 @@ function withReasonNotesAfterReferringProvider(schema: ColumnDef[]): ColumnDef[]
 
 function withStatusEmailSentAfterApptDateTime(schema: ColumnDef[]): ColumnDef[] {
   const alreadyHasStatus = schema.some((c) => c.key === 'status')
-  const alreadyHasEmailSent = schema.some((c) => c.key === 'emailSent')
-  if (alreadyHasStatus && alreadyHasEmailSent) return schema
+  const alreadyHasStatusUpdatedAt = schema.some((c) => c.key === 'statusUpdatedAt')
+  const alreadyHasEmailSentAt = schema.some((c) => c.key === 'emailSentAt')
+  if (alreadyHasStatus && alreadyHasStatusUpdatedAt && alreadyHasEmailSentAt) return schema
 
   const idx = schema.findIndex((c) => c.key === 'apptDateTime')
   if (idx < 0) return schema
@@ -546,8 +562,11 @@ function withStatusEmailSentAfterApptDateTime(schema: ColumnDef[]): ColumnDef[] 
   if (!alreadyHasStatus) {
     additions.push({ key: 'status', label: 'Status', type: 'text' })
   }
-  if (!alreadyHasEmailSent) {
-    additions.push({ key: 'emailSent', label: 'Email Sent', type: 'checkbox' })
+  if (!alreadyHasStatusUpdatedAt) {
+    additions.push({ key: 'statusUpdatedAt', label: 'Status Updated Date', type: 'datetime' })
+  }
+  if (!alreadyHasEmailSentAt) {
+    additions.push({ key: 'emailSentAt', label: 'Email Sent At', type: 'datetime' })
   }
 
   return [...schema.slice(0, idx + 1), ...additions, ...schema.slice(idx + 1)]
@@ -698,8 +717,52 @@ export default function ReferralTablePage() {
       thirdPatientCommunication: r.communication_3,
       apptDateTime: r.appt_date_time,
       status: r.status,
-      emailSent: r.email_sent_at != null,
+      statusUpdatedAt: r.status_updated_at,
+      emailSentAt: r.email_sent_at,
       notes: r.notes,
+    }
+
+    for (const col of schemaForRow) {
+      const raw = mapped[col.key]
+      out[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(raw) : String(raw ?? '')
+    }
+
+    return out
+  }
+
+  function mapReferralTableRecordToRow(r: any, schemaForRow: ColumnDef[]): Row {
+    const out: Row = {
+      id: String(r.id ?? ''),
+      archived: typeof r.record_status === 'string' ? r.record_status !== 'active' : false,
+    }
+
+    out.referringProviderId = r.referral_provider_id != null ? String(r.referral_provider_id) : ''
+    ;(out as any).provider_practice = r.provider_practice
+    ;(out as any).providerPractice = r.provider_practice
+
+    const mapped: Record<string, unknown> = {
+      dateReferralReceived: r.date_referral_received,
+      patientName: r.patient_name,
+      dob: r.dob,
+      phoneNumber: r.phone,
+      insurance: r.insurance,
+      ngmPatient: r.ngm_patient,
+      referringProvider: r.referral_provider,
+      referringProviderId: r.referral_provider_id != null ? String(r.referral_provider_id) : '',
+      reason: r.reason,
+      formsSent: r.forms_sent === true,
+      formReceived: normalizeFormReceived(r.form_received),
+      calledToSchedule: r.called_to_schedule,
+      prepInstructionSent: r.prep_instruction_sent,
+      firstPatientCommunication: r.communication_1,
+      secondPatientCommunication: r.communication_2,
+      thirdPatientCommunication: r.communication_3,
+      apptDateTime: r.appt_date_time,
+      status: r.status,
+      statusUpdatedAt: r.status_updated_at,
+      emailSentAt: r.email_sent_at,
+      notes: r.notes,
+      notes2: r.notes_2 ?? r.notes2,
     }
 
     for (const col of schemaForRow) {
@@ -734,7 +797,8 @@ export default function ReferralTablePage() {
       thirdPatientCommunication: r.communication_3,
       apptDateTime: r.appt_date_time,
       status: r.status,
-      emailSent: r.email_sent_at != null,
+      statusUpdatedAt: r.status_updated_at,
+      emailSentAt: r.email_sent_at,
       notes: r.notes,
     }
 
@@ -761,9 +825,11 @@ export default function ReferralTablePage() {
 
     for (const col of schemaForRow) {
       const raw =
-        col.key === 'emailSent'
-          ? (payload as any)?.email_sent_at != null
-          : payload?.[col.key]
+        col.key === 'statusUpdatedAt'
+          ? (payload as any)?.status_updated_at ?? (payload as any)?.statusUpdatedAt
+          : col.key === 'emailSentAt'
+            ? (payload as any)?.email_sent_at ?? (payload as any)?.emailSentAt
+            : payload?.[col.key]
       out[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(raw) : String(raw ?? '')
     }
 
@@ -779,21 +845,15 @@ export default function ReferralTablePage() {
     setRowsError(null)
 
     void (async () => {
-      const isColonoscopy = activeSpecialty === 'Colonoscopy and EGD'
-      const isGeneralSurgery = activeSpecialty === 'General Surgery'
-      const isSpineNeuroRajamand = activeSpecialty === 'Spine Neuro Rajamand'
+      const tableName = SPECIALTY_TABLES[activeSpecialty]
 
-      const query = isColonoscopy
-        ? supabase.from('referrals_colonoscopy_egd').select('*').eq('record_status', 'active')
-        : isGeneralSurgery
-          ? supabase.from('referrals_general_surgery').select('*')
-          : isSpineNeuroRajamand
-            ? supabase.from('referrals_spine_neuro_rajamand').select('*').eq('record_status', 'active')
-          : supabase
-              .from('referrals')
-              .select('id, archived, data, created_at')
-              .eq('user_id', uid)
-              .eq('specialty', activeSpecialty)
+      const query = tableName
+        ? supabase.from(tableName).select('*').eq('record_status', 'active')
+        : supabase
+            .from('referrals')
+            .select('id, archived, data, created_at')
+            .eq('user_id', uid)
+            .eq('specialty', activeSpecialty)
 
       const { data, error } = await query.order('created_at', { ascending: false })
 
@@ -807,13 +867,7 @@ export default function ReferralTablePage() {
       }
 
       const next: Row[] = (data ?? []).map((r: any) =>
-        isColonoscopy
-          ? mapColonoscopyEgdRecordToRow(r, baseSchema)
-          : isGeneralSurgery
-            ? mapGeneralSurgeryRecordToRow(r, baseSchema)
-          : isSpineNeuroRajamand
-            ? mapGeneralSurgeryRecordToRow(r, baseSchema)
-          : mapSupabaseRecordToRow(r, baseSchema),
+        tableName ? mapReferralTableRecordToRow(r, baseSchema) : mapSupabaseRecordToRow(r, baseSchema),
       )
 
       setRows(next)
@@ -909,8 +963,7 @@ export default function ReferralTablePage() {
 
     if (!q) return dateFiltered
 
-    const searchColKeys =
-      searchBy === '__all__' ? schema.map((c) => c.key) : [searchBy]
+    const searchColKeys = searchBy === '__all__' ? schema.map((c) => c.key) : [searchBy]
 
     return dateFiltered.filter((r) => {
       for (const k of searchColKeys) {
@@ -979,9 +1032,7 @@ export default function ReferralTablePage() {
     },
     [editorSpecialty],
   )
-  const [draft, setDraft] = useState<Record<string, RowValue>>(() =>
-    createEmptyDraft(baseSchema),
-  )
+  const [draft, setDraft] = useState<Record<string, RowValue>>(() => createEmptyDraft(baseSchema))
 
   const editingRow = useMemo(() => {
     if (!editingId) return null
@@ -1010,7 +1061,6 @@ export default function ReferralTablePage() {
     if (!row) return
     setEditingId(id)
     setEditorSpecialty(activeSpecialty)
-
     const nextDraft: Record<string, RowValue> = createEmptyDraft(baseSchema)
     for (const col of baseSchema) {
       if (col.type === 'datetime') {
@@ -1020,10 +1070,15 @@ export default function ReferralTablePage() {
       }
     }
 
-    const rowProviderId =
-      typeof row.referringProviderId === 'string' ? row.referringProviderId.trim() : ''
+    const rowProviderId = typeof row.referringProviderId === 'string' ? row.referringProviderId.trim() : ''
     if (rowProviderId) {
       nextDraft.referringProviderId = rowProviderId
+      const picked = providerOptions.find((p) => String(p.id) === String(rowProviderId)) ?? null
+      if (picked) {
+        const providerPractice = String(picked.provider_practice ?? '').trim()
+        if (providerPractice) nextDraft[REFERRING_PROVIDER_PRACTICE_KEY] = providerPractice
+        nextDraft.referringProvider = providerLabel(picked)
+      }
     } else {
       const providerFromTable = String(row.referringProvider ?? '').trim()
       const practiceFromTable = String(
@@ -1032,7 +1087,6 @@ export default function ReferralTablePage() {
           row[REFERRING_PROVIDER_PRACTICE_KEY] ??
           '',
       ).trim()
-
       if (providerFromTable === UNKNOWN_PROVIDER_LABEL) {
         nextDraft.referringProviderId = UNKNOWN_PROVIDER_VALUE
         nextDraft.referringProvider = UNKNOWN_PROVIDER_LABEL
@@ -1040,7 +1094,6 @@ export default function ReferralTablePage() {
         nextDraft.referringProviderId = OTHER_PROVIDER_VALUE
         nextDraft.referringProvider = providerFromTable
       }
-
       if (practiceFromTable) {
         nextDraft[REFERRING_PROVIDER_PRACTICE_KEY] = practiceFromTable
       }
@@ -1063,12 +1116,7 @@ export default function ReferralTablePage() {
     if (!uid) return
     setSaveError(null)
 
-    const requiredKeys = [
-      'dateReferralReceived',
-      'patientName',
-      'dob',
-      'phoneNumber',
-    ] as const
+    const requiredKeys = ['dateReferralReceived', 'patientName', 'dob', 'phoneNumber'] as const
 
     const schemaKeys = new Set(editorSchema.map((c) => c.key))
     const missingLabels: string[] = []
@@ -1098,8 +1146,10 @@ export default function ReferralTablePage() {
         : ''
     if (!practice) missingLabels.push('Referral Provider Practice')
 
-    const providerId = typeof draft.referringProviderId === 'string' ? draft.referringProviderId.trim() : ''
-    const providerText = typeof draft.referringProvider === 'string' ? draft.referringProvider.trim() : ''
+    const providerId =
+      typeof draft.referringProviderId === 'string' ? draft.referringProviderId.trim() : ''
+    const providerText =
+      typeof draft.referringProvider === 'string' ? draft.referringProvider.trim() : ''
     const providerIsSelected = Boolean(providerId)
     const providerNeedsText = providerId === OTHER_PROVIDER_VALUE || practice === OTHER_PROVIDER_PRACTICE_VALUE
     if (!providerIsSelected && practice !== OTHER_PROVIDER_PRACTICE_VALUE) {
@@ -1143,351 +1193,147 @@ export default function ReferralTablePage() {
     const data: Record<string, unknown> = {}
     for (const col of editorSchema) {
       if (col.key === REFERRING_PROVIDER_PRACTICE_KEY) continue
-      data[col.key] = draft[col.key]
-    }
-
-    if (
-      typeof draft.referringProviderId === 'string' &&
-      draft.referringProviderId.trim() &&
-      draft.referringProviderId !== OTHER_PROVIDER_VALUE &&
-      draft.referringProviderId !== UNKNOWN_PROVIDER_VALUE
-    ) {
-      data.referringProviderId = draft.referringProviderId
+      if (col.type === 'datetime') {
+        data[col.key] = toIsoDateTime(draft[col.key])
+      } else {
+        data[col.key] = draft[col.key]
+      }
     }
 
     const targetSpecialty = editingId ? activeSpecialty : editorSpecialty
     const archived = editingRow?.archived === true
+    const tableName = SPECIALTY_TABLES[targetSpecialty]
 
     const nextStatus = typeof data.status === 'string' ? data.status.trim() : ''
     const prevStatus = typeof editingRow?.status === 'string' ? editingRow.status.trim() : ''
     const shouldTouchStatusUpdatedAt = Boolean(nextStatus) && (!editingId || nextStatus !== prevStatus)
 
     void (async () => {
-      const isColonoscopy = targetSpecialty === 'Colonoscopy and EGD'
-      const isGeneralSurgery = targetSpecialty === 'General Surgery'
-      const isSpineNeuroRajamand = targetSpecialty === 'Spine Neuro Rajamand'
+      try {
+        const selectedProvider =
+          typeof draft.referringProviderId === 'string' &&
+          draft.referringProviderId.trim() &&
+          draft.referringProviderId !== OTHER_PROVIDER_VALUE &&
+          draft.referringProviderId !== UNKNOWN_PROVIDER_VALUE
+            ? providerOptions.find((p) => String(p.id) === String(draft.referringProviderId)) ?? null
+            : null
 
-      const selectedProvider =
-        typeof draft.referringProviderId === 'string' &&
-        draft.referringProviderId.trim() &&
-        draft.referringProviderId !== OTHER_PROVIDER_VALUE &&
-        draft.referringProviderId !== UNKNOWN_PROVIDER_VALUE
-          ? providerOptions.find((p) => String(p.id) === String(draft.referringProviderId)) ?? null
-          : null
+        const resolvedProviderText = selectedProvider
+          ? providerLabel(selectedProvider)
+          : String(data.referringProvider ?? '')
+        const resolvedProviderId = selectedProvider ? Number(selectedProvider.id) : null
+        const resolvedProviderPractice = selectedProvider ? (selectedProvider.provider_practice ?? '') : ''
 
-      const resolvedProviderText = selectedProvider ? providerLabel(selectedProvider) : String(data.referringProvider ?? '')
-      const resolvedProviderId = selectedProvider ? Number(selectedProvider.id) : null
-      const resolvedProviderPractice = selectedProvider ? (selectedProvider.provider_practice ?? '') : ''
+        if (tableName) {
+          const payload: any = {
+            record_status: archived ? 'archived' : 'active',
+            updated_at: new Date().toISOString(),
+            date_referral_received: toIsoDateOnly(data.dateReferralReceived),
+            patient_name: String(data.patientName ?? ''),
+            dob: toIsoDateOnly(data.dob),
+            phone: String(data.phoneNumber ?? ''),
+            insurance: String(data.insurance ?? ''),
+            ngm_patient: data.ngmPatient === true,
+            referral_provider: resolvedProviderText,
+            referral_provider_id: resolvedProviderId,
+            provider_practice: resolvedProviderPractice,
+            reason: String(data.reason ?? ''),
+            status: typeof data.status === 'string' && data.status.trim() ? data.status.trim() : null,
+            ...(shouldTouchStatusUpdatedAt ? { status_updated_at: new Date().toISOString() } : {}),
+            email_sent_at: toIsoDateTime(data.emailSentAt),
+            forms_sent: data.formsSent === true,
+            form_received:
+              typeof data.formReceived === 'string' && data.formReceived.trim() ? data.formReceived.trim() : null,
+            called_to_schedule: data.calledToSchedule === true,
+            prep_instruction_sent: data.prepInstructionSent === true,
+            communication_1: toIsoDateTime(data.firstPatientCommunication),
+            communication_2: toIsoDateTime(data.secondPatientCommunication),
+            communication_3: toIsoDateTime(data.thirdPatientCommunication),
+            appt_date_time: toIsoDateTime(data.apptDateTime),
+            notes: String(data.notes ?? ''),
+            notes_2: String((data as any).notes2 ?? ''),
+          }
 
-      if (isColonoscopy) {
-        const payload = {
-          date_referral_received: toIsoDateOnly(data.dateReferralReceived),
-          patient_name: String(data.patientName ?? ''),
-          dob: toIsoDateOnly(data.dob),
-          phone: String(data.phoneNumber ?? ''),
-          insurance: String(data.insurance ?? ''),
-          referral_provider: resolvedProviderText || null,
-          referral_provider_id: resolvedProviderId,
-          reason: String(data.reason ?? ''),
-          status:
-            typeof data.status === 'string' && data.status.trim() ? data.status.trim() : null,
-          ...(shouldTouchStatusUpdatedAt ? { status_updated_at: new Date().toISOString() } : {}),
-          forms_sent: data.formsSent === true,
-          form_received:
-            typeof data.formReceived === 'string' && data.formReceived.trim()
-              ? data.formReceived.trim()
-              : null,
-          called_to_schedule: data.calledToSchedule === true,
-          prep_instruction_sent: data.prepInstructionSent === true,
-          communication_1: toIsoDateTime(data.firstPatientCommunication),
-          communication_2: toIsoDateTime(data.secondPatientCommunication),
-          communication_3: toIsoDateTime(data.thirdPatientCommunication),
-          appt_date_time: toIsoDateTime(data.apptDateTime),
-          notes: String(data.notes ?? ''),
-          record_status: 'active',
-          updated_at: new Date().toISOString(),
-        }
+          if (editingId) {
+            const { error } = await supabase.from(tableName).update(payload).eq('id', Number(editingId))
+            if (error) throw error
 
-        if (editingId) {
-          const { error } = await supabase
-            .from('referrals_colonoscopy_egd')
-            .update(payload)
-            .eq('id', Number(editingId))
+            const nextRow = mapReferralTableRecordToRow(
+              { id: Number(editingId), record_status: payload.record_status, ...payload },
+              editorSchema,
+            )
+            nextRow.referringProvider = resolvedProviderText
+            nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
+            nextRow[REFERRING_PROVIDER_PRACTICE_KEY] = resolvedProviderPractice
 
-          if (error) {
-            setSaveError(error.message)
+            if (targetSpecialty === activeSpecialty) {
+              setRows((prev) => prev.map((x) => (x.id === editingId ? nextRow : x)))
+            }
+            closeEditor()
             return
           }
 
-          {
-            setRows((prev) =>
-              prev.map((r) =>
-                r.id === editingId
-                  ? {
-                      ...r,
-                      ...Object.fromEntries(
-                        Object.entries(data).map(([k, v]) => [k, typeof v === 'boolean' ? v : String(v ?? '')]),
-                      ),
-                      referringProvider: resolvedProviderText,
-                      referringProviderId: resolvedProviderId != null ? String(resolvedProviderId) : '',
-                      [REFERRING_PROVIDER_PRACTICE_KEY]: resolvedProviderPractice,
-                      archived: false,
-                    }
-                  : r,
-              ),
-            )
-            closeEditor()
-          }
-          return
-        }
+          const { data: inserted, error } = await supabase
+            .from(tableName)
+            .insert(payload)
+            .select('id')
+            .single()
+          if (error) throw error
 
-        const { data: inserted, error } = await supabase
-          .from('referrals_colonoscopy_egd')
-          .insert(payload)
-          .select('id')
-          .single()
-
-        if (error) {
-          setSaveError(error.message)
-          return
-        }
-
-        if (inserted?.id != null) {
-          const nextRow: Row = { id: String(inserted.id), archived: false }
-          for (const col of editorSchema) {
-            const v = col.key === 'formsSent' ? data.formsSent === true : data[col.key]
-            nextRow[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(v) : String(v ?? '')
-          }
-          nextRow.referringProvider = resolvedProviderText
-          nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
-          nextRow[REFERRING_PROVIDER_PRACTICE_KEY] = resolvedProviderPractice
-          if (targetSpecialty === activeSpecialty) {
-            setRows((prev) => [nextRow, ...prev])
-          }
-          closeEditor()
-        }
-
-        return
-      }
-
-      if (isGeneralSurgery) {
-        const payload = {
-          date_referral_received: toIsoDateOnly(data.dateReferralReceived),
-          patient_name: String(data.patientName ?? ''),
-          dob: toIsoDateOnly(data.dob),
-          phone: String(data.phoneNumber ?? ''),
-          insurance: String(data.insurance ?? ''),
-          referral_provider: resolvedProviderText || null,
-          referral_provider_id: resolvedProviderId,
-          reason: String(data.reason ?? ''),
-          status:
-            typeof data.status === 'string' && data.status.trim() ? data.status.trim() : null,
-          ...(shouldTouchStatusUpdatedAt ? { status_updated_at: new Date().toISOString() } : {}),
-          communication_1: toIsoDateTime(data.firstPatientCommunication),
-          communication_2: toIsoDateTime(data.secondPatientCommunication),
-          communication_3: toIsoDateTime(data.thirdPatientCommunication),
-          appt_date_time: toIsoDateTime(data.apptDateTime),
-          notes: String(data.notes ?? ''),
-          record_status: 'active',
-          updated_at: new Date().toISOString(),
-        }
-
-        if (editingId) {
-          const { error } = await supabase
-            .from('referrals_general_surgery')
-            .update(payload)
-            .eq('id', Number(editingId))
-
-          if (error) {
-            setSaveError(error.message)
-            return
-          }
-
-          {
-            setRows((prev) =>
-              prev.map((r) =>
-                r.id === editingId
-                  ? {
-                      ...r,
-                      ...Object.fromEntries(
-                        Object.entries(data).map(([k, v]) => [k, typeof v === 'boolean' ? v : String(v ?? '')]),
-                      ),
-                      referringProvider: resolvedProviderText,
-                      referringProviderId: resolvedProviderId != null ? String(resolvedProviderId) : '',
-                      [REFERRING_PROVIDER_PRACTICE_KEY]: resolvedProviderPractice,
-                      archived: false,
-                    }
-                  : r,
-              ),
-            )
-            closeEditor()
-          }
-          return
-        }
-
-        const { data: inserted, error } = await supabase
-          .from('referrals_general_surgery')
-          .insert(payload)
-          .select('id')
-          .single()
-
-        if (error) {
-          setSaveError(error.message)
-          return
-        }
-
-        if (inserted?.id != null) {
-          const nextRow: Row = { id: String(inserted.id), archived: false }
-          for (const col of editorSchema) {
-            const v = col.key === 'referringProvider' ? resolvedProviderText : data[col.key]
-            nextRow[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(v) : String(v ?? '')
-          }
-          nextRow.referringProvider = resolvedProviderText
-          nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
-          nextRow[REFERRING_PROVIDER_PRACTICE_KEY] = resolvedProviderPractice
-          if (targetSpecialty === activeSpecialty) {
-            setRows((prev) => [nextRow, ...prev])
-          }
-          closeEditor()
-        }
-
-        return
-      }
-
-      if (isSpineNeuroRajamand) {
-        const payload = {
-          date_referral_received: toIsoDateOnly(data.dateReferralReceived),
-          patient_name: String(data.patientName ?? ''),
-          dob: toIsoDateOnly(data.dob),
-          phone: String(data.phoneNumber ?? ''),
-          insurance: String(data.insurance ?? ''),
-          referral_provider: resolvedProviderText || null,
-          referral_provider_id: resolvedProviderId,
-          reason: String(data.reason ?? ''),
-          communication_1: toIsoDateOnly(data.firstPatientCommunication),
-          communication_2: toIsoDateOnly(data.secondPatientCommunication),
-          communication_3: toIsoDateOnly(data.thirdPatientCommunication),
-          appt_date_time: toIsoDateTime(data.apptDateTime),
-          notes: String(data.notes ?? ''),
-          record_status: 'active',
-          updated_at: new Date().toISOString(),
-        }
-
-        if (editingId) {
-          const { error } = await supabase
-            .from('referrals_spine_neuro_rajamand')
-            .update(payload)
-            .eq('id', Number(editingId))
-
-          if (error) {
-            setSaveError(error.message)
-            return
-          }
-
-          {
-            setRows((prev) =>
-              prev.map((r) =>
-                r.id === editingId
-                  ? {
-                      ...r,
-                      ...Object.fromEntries(
-                        Object.entries(data).map(([k, v]) => [k, typeof v === 'boolean' ? v : String(v ?? '')]),
-                      ),
-                      referringProvider: resolvedProviderText,
-                      referringProviderId: resolvedProviderId != null ? String(resolvedProviderId) : '',
-                      archived: false,
-                    }
-                  : r,
-              ),
-            )
-            closeEditor()
-          }
-          return
-        }
-
-        const { data: inserted, error } = await supabase
-          .from('referrals_spine_neuro_rajamand')
-          .insert(payload)
-          .select('id')
-          .single()
-
-        if (error) {
-          setSaveError(error.message)
-          return
-        }
-
-        if (inserted?.id != null) {
-          const nextRow: Row = { id: String(inserted.id), archived: false }
-          for (const col of editorSchema) {
-            const v = col.key === 'referringProvider' ? resolvedProviderText : data[col.key]
-            nextRow[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(v) : String(v ?? '')
-          }
-          nextRow.referringProvider = resolvedProviderText
-          nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
-          nextRow[REFERRING_PROVIDER_PRACTICE_KEY] = resolvedProviderPractice
-          if (targetSpecialty === activeSpecialty) {
-            setRows((prev) => [nextRow, ...prev])
-          }
-          closeEditor()
-        }
-
-        return
-      }
-
-      if (editingId) {
-        const { error } = await supabase
-          .from('referrals')
-          .update({ specialty: targetSpecialty, archived, data, updated_at: new Date().toISOString() })
-          .eq('id', editingId)
-          .eq('user_id', uid)
-
-        if (error) {
-          setSaveError(error.message)
-          return
-        }
-
-        {
-          setRows((prev) =>
-            prev.map((r) =>
-              r.id === editingId
-                ? {
-                    ...r,
-                    ...Object.fromEntries(
-                      Object.entries(data).map(([k, v]) => [k, typeof v === 'boolean' ? v : String(v ?? '')]),
-                    ),
-                    archived,
-                    [REFERRING_PROVIDER_PRACTICE_KEY]: resolvedProviderPractice,
-                  }
-                : r,
-            ),
+          const insertedId = String(inserted?.id ?? '')
+          const nextRow = mapReferralTableRecordToRow(
+            { id: Number(inserted?.id ?? 0), record_status: payload.record_status, ...payload },
+            editorSchema,
           )
+          nextRow.id = insertedId
+          nextRow.referringProvider = resolvedProviderText
+          nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
+          nextRow[REFERRING_PROVIDER_PRACTICE_KEY] = resolvedProviderPractice
+
+          if (targetSpecialty === activeSpecialty) {
+            setRows((prev) => [nextRow, ...prev])
+          }
           closeEditor()
+          return
         }
-        return
-      }
 
-      const { data: inserted, error } = await supabase
-        .from('referrals')
-        .insert({ user_id: uid, specialty: targetSpecialty, archived: false, data })
-        .select('id')
-        .single()
-
-      if (error) {
-        setSaveError(error.message)
-        return
-      }
-
-      if (inserted?.id) {
-        const nextRow: Row = { id: String(inserted.id), archived: false }
-        for (const col of editorSchema) {
-          const v = data[col.key]
-          nextRow[col.key] = col.type === 'checkbox' ? normalizeBooleanLoose(v) : String(v ?? '')
+        const payload: any = {
+          user_id: uid,
+          archived,
+          specialty: targetSpecialty,
+          data,
         }
+
+        if (editingId) {
+          const { error } = await supabase.from('referrals').update(payload).eq('id', Number(editingId))
+          if (error) throw error
+          const nextRow: Row = { ...editingRow, ...data, id: editingId } as any
+          nextRow.referringProvider = resolvedProviderText
+          nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
+          nextRow[REFERRING_PROVIDER_PRACTICE_KEY] = resolvedProviderPractice
+          if (targetSpecialty === activeSpecialty) {
+            setRows((prev) => prev.map((x) => (x.id === editingId ? nextRow : x)))
+          }
+          closeEditor()
+          return
+        }
+
+        const { data: inserted, error } = await supabase
+          .from('referrals')
+          .insert(payload)
+          .select('id')
+          .single()
+        if (error) throw error
+        const nextRow: Row = { ...data, id: String(inserted?.id ?? '') } as any
+        nextRow.referringProvider = resolvedProviderText
+        nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
         nextRow[REFERRING_PROVIDER_PRACTICE_KEY] = resolvedProviderPractice
         if (targetSpecialty === activeSpecialty) {
           setRows((prev) => [nextRow, ...prev])
         }
         closeEditor()
+      } catch (e: any) {
+        setSaveError(e?.message ?? 'Failed to save')
       }
     })()
   }
@@ -1496,30 +1342,20 @@ export default function ReferralTablePage() {
     const uid = session?.user?.id
     if (!uid) return
     void (async () => {
-      const isColonoscopy = activeSpecialty === 'Colonoscopy and EGD'
-      const isGeneralSurgery = activeSpecialty === 'General Surgery'
-      const isSpineNeuroRajamand = activeSpecialty === 'Spine Neuro Rajamand'
-      const { error } = isColonoscopy
+      const tableName = SPECIALTY_TABLES[activeSpecialty]
+      const { error } = tableName
         ? await supabase
-            .from('referrals_colonoscopy_egd')
+            .from(tableName)
             .update({ record_status: 'archived', updated_at: new Date().toISOString() })
             .eq('id', Number(id))
-        : isGeneralSurgery
-          ? await supabase
-              .from('referrals_general_surgery')
-              .update({ record_status: 'archived', updated_at: new Date().toISOString() })
-              .eq('id', Number(id))
-          : isSpineNeuroRajamand
-            ? await supabase
-                .from('referrals_spine_neuro_rajamand')
-                .update({ record_status: 'archived', updated_at: new Date().toISOString() })
-                .eq('id', Number(id))
-        : await supabase
-            .from('referrals')
-            .update({ archived: true, updated_at: new Date().toISOString() })
-            .eq('id', id)
-            .eq('user_id', uid)
-      if (!error) setRows((prev) => prev.map((r) => (r.id === id ? { ...r, archived: true } : r)))
+        : await supabase.from('referrals').update({ archived: true }).eq('id', Number(id))
+
+      if (error) {
+        setRowsError(error.message)
+        return
+      }
+
+      setRows((prev) => prev.filter((r) => r.id !== id))
     })()
   }
 
@@ -2279,6 +2115,17 @@ export default function ReferralTablePage() {
                     )
                   }
 
+                  const comm1Filled =
+                    typeof draft.firstPatientCommunication === 'string' && draft.firstPatientCommunication.trim().length > 0
+                  const comm2Filled =
+                    typeof draft.secondPatientCommunication === 'string' && draft.secondPatientCommunication.trim().length > 0
+                  const shouldDisable =
+                    col.key === 'secondPatientCommunication'
+                      ? !comm1Filled
+                      : col.key === 'thirdPatientCommunication'
+                        ? !comm1Filled || !comm2Filled
+                        : false
+
                   return (
                     <Input
                       key={col.key}
@@ -2291,6 +2138,7 @@ export default function ReferralTablePage() {
                             : 'text'
                       }
                       value={typeof value === 'string' ? value : ''}
+                      disabled={shouldDisable}
                       onChange={(v) => setDraft((d) => ({ ...d, [col.key]: v }))}
                     />
                   )
@@ -2419,11 +2267,13 @@ function Input({
   label,
   type,
   value,
+  disabled,
   onChange,
 }: {
   label: string
   type?: 'text' | 'date' | 'datetime-local' | 'tel'
   value: string
+  disabled?: boolean
   onChange: (next: string) => void
 }) {
   const isPhone = /phone/i.test(label)
@@ -2436,11 +2286,12 @@ function Input({
         pattern={isPhone ? '[0-9]*' : undefined}
         maxLength={isPhone ? 10 : undefined}
         value={value}
+        disabled={disabled}
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
           const next = e.target.value
           onChange(isPhone ? next.replace(/\D+/g, '').slice(0, 10) : next)
         }}
-        className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
+        className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-500"
       />
     </label>
   )
