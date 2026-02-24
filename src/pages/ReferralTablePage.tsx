@@ -1228,30 +1228,75 @@ export default function ReferralTablePage() {
           const payload: any = {
             record_status: archived ? 'archived' : 'active',
             updated_at: new Date().toISOString(),
-            date_referral_received: toIsoDateOnly(data.dateReferralReceived),
-            patient_name: String(data.patientName ?? ''),
-            dob: toIsoDateOnly(data.dob),
-            phone: String(data.phoneNumber ?? ''),
-            insurance: String(data.insurance ?? ''),
-            ngm_patient: data.ngmPatient === true,
-            referral_provider: resolvedProviderText,
-            referral_provider_id: resolvedProviderId,
-            provider_practice: resolvedProviderPractice,
-            reason: String(data.reason ?? ''),
-            status: typeof data.status === 'string' && data.status.trim() ? data.status.trim() : null,
-            ...(shouldTouchStatusUpdatedAt ? { status_updated_at: new Date().toISOString() } : {}),
-            email_sent_at: toIsoDateTime(data.emailSentAt),
-            forms_sent: data.formsSent === true,
-            form_received:
-              typeof data.formReceived === 'string' && data.formReceived.trim() ? data.formReceived.trim() : null,
-            called_to_schedule: data.calledToSchedule === true,
-            prep_instruction_sent: data.prepInstructionSent === true,
-            communication_1: toIsoDateTime(data.firstPatientCommunication),
-            communication_2: toIsoDateTime(data.secondPatientCommunication),
-            communication_3: toIsoDateTime(data.thirdPatientCommunication),
-            appt_date_time: toIsoDateTime(data.apptDateTime),
-            notes: String(data.notes ?? ''),
-            notes_2: String((data as any).notes2 ?? ''),
+          }
+
+          if (schemaKeys.has('dateReferralReceived')) {
+            payload.date_referral_received = toIsoDateOnly(data.dateReferralReceived)
+          }
+          if (schemaKeys.has('patientName')) {
+            payload.patient_name = String(data.patientName ?? '')
+          }
+          if (schemaKeys.has('dob')) {
+            payload.dob = toIsoDateOnly(data.dob)
+          }
+          if (schemaKeys.has('phoneNumber')) {
+            payload.phone = String(data.phoneNumber ?? '')
+          }
+          if (schemaKeys.has('insurance')) {
+            payload.insurance = String(data.insurance ?? '')
+          }
+          if (schemaKeys.has('ngmPatient')) {
+            payload.ngm_patient = (data as any).ngmPatient === true
+          }
+
+          if (schemaKeys.has('referringProvider') || schemaKeys.has('referringProviderId')) {
+            payload.referral_provider = resolvedProviderText
+            payload.referral_provider_id = resolvedProviderId
+            payload.provider_practice = resolvedProviderPractice
+          }
+
+          if (schemaKeys.has('reason')) {
+            payload.reason = String(data.reason ?? '')
+          }
+          if (schemaKeys.has('status')) {
+            payload.status = typeof data.status === 'string' && data.status.trim() ? data.status.trim() : null
+            if (shouldTouchStatusUpdatedAt) {
+              payload.status_updated_at = new Date().toISOString()
+            }
+          }
+          if (schemaKeys.has('emailSentAt')) {
+            payload.email_sent_at = toIsoDateTime(data.emailSentAt)
+          }
+          if (schemaKeys.has('formsSent')) {
+            payload.forms_sent = data.formsSent === true
+          }
+          if (schemaKeys.has('formReceived')) {
+            payload.form_received =
+              typeof data.formReceived === 'string' && data.formReceived.trim() ? data.formReceived.trim() : null
+          }
+          if (schemaKeys.has('calledToSchedule')) {
+            payload.called_to_schedule = data.calledToSchedule === true
+          }
+          if (schemaKeys.has('prepInstructionSent')) {
+            payload.prep_instruction_sent = data.prepInstructionSent === true
+          }
+          if (schemaKeys.has('firstPatientCommunication')) {
+            payload.communication_1 = toIsoDateTime(data.firstPatientCommunication)
+          }
+          if (schemaKeys.has('secondPatientCommunication')) {
+            payload.communication_2 = toIsoDateTime(data.secondPatientCommunication)
+          }
+          if (schemaKeys.has('thirdPatientCommunication')) {
+            payload.communication_3 = toIsoDateTime(data.thirdPatientCommunication)
+          }
+          if (schemaKeys.has('apptDateTime')) {
+            payload.appt_date_time = toIsoDateTime(data.apptDateTime)
+          }
+          if (schemaKeys.has('notes')) {
+            payload.notes = String(data.notes ?? '')
+          }
+          if (schemaKeys.has('notes2')) {
+            payload.notes_2 = String((data as any).notes2 ?? '')
           }
 
           if (editingId) {
@@ -1756,7 +1801,7 @@ export default function ReferralTablePage() {
                   </tr>
                 ) : (
                   sortedRows.map((r) => (
-                    <tr key={r.id} className="hover:bg-slate-50">
+                    <tr key={r.id} className="odd:bg-slate-50 hover:bg-slate-100">
                       {displaySchema.map((col, idx) => (
                         <Td
                           key={col.key}

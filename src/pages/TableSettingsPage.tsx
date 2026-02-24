@@ -650,7 +650,7 @@ export default function TableSettingsPage() {
                       </thead>
                       <tbody>
                         {insurances.map((x) => (
-                          <tr key={x.id} className="hover:bg-slate-50">
+                          <tr key={x.id} className="odd:bg-slate-50 hover:bg-slate-100">
                             <td className="border-b px-3 py-2 text-sm text-slate-800">{x.label}</td>
                             <td className="border-b px-3 py-2">
                               <label className="inline-flex cursor-pointer items-center gap-2 text-sm text-slate-700">
@@ -955,7 +955,7 @@ export default function TableSettingsPage() {
                           </thead>
                           <tbody>
                             {filteredProviders.map((p) => (
-                              <tr key={p.id} className="hover:bg-slate-50">
+                              <tr key={p.id} className="odd:bg-slate-50 hover:bg-slate-100">
                                 <td className="border-b px-3 py-2 align-top text-sm text-slate-800">{p.practice}</td>
                                 <td className="border-b px-3 py-2 align-top text-sm text-slate-800">{p.provider}</td>
                                 <td className="border-b px-3 py-2 align-top text-sm text-slate-800">{p.contactPhone}</td>

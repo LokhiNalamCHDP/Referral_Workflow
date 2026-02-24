@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import AppHeader from '../components/AppHeader'
 import { supabase } from '../lib/supabaseClient'
 import { useSupabaseAuth } from '../lib/useSupabaseAuth'
@@ -11,6 +11,15 @@ export default function SignInPage() {
   const [success, setSuccess] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [mode, setMode] = useState<'sign_in' | 'forgot'>('sign_in')
+
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get('reason')
+    if (reason === 'disabled') {
+      setError('Your account is disabled. Please contact an admin.')
+    } else if (reason === 'no_access') {
+      setError('Your account does not have access yet. Please contact an admin.')
+    }
+  }, [])
 
   async function onSubmit() {
     setError(null)
@@ -58,7 +67,10 @@ export default function SignInPage() {
               <span className="text-xs font-medium text-slate-700">Email</span>
               <input
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  setEmail(e.target.value)
+                  setError(null)
+                }}
                 type="email"
                 autoComplete="email"
                 className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"
@@ -70,7 +82,10 @@ export default function SignInPage() {
                 <span className="text-xs font-medium text-slate-700">Password</span>
                 <input
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
+                  onChange={(e) => {
+                    setPassword(e.target.value)
+                    setError(null)
+                  }}
                   type="password"
                   autoComplete="current-password"
                   className="w-full rounded-md border bg-white px-3 py-2 text-sm outline-none ring-slate-200 focus:ring-2"

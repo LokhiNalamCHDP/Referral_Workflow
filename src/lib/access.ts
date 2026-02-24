@@ -10,7 +10,7 @@ export async function fetchUserAccess(): Promise<UserAccess | null> {
 
   const { data, error } = await supabase
     .from('user_access')
-    .select('role, location')
+    .select('role, location, status')
     .eq('user_id', userId)
     .maybeSingle()
 
@@ -18,5 +18,8 @@ export async function fetchUserAccess(): Promise<UserAccess | null> {
     if ((error as any)?.code === 'PGRST116') return null
     return null
   }
-  return data as UserAccess
+
+  const statusRaw = String((data as any)?.status ?? '').trim().toLowerCase()
+  const status: 'active' | 'disabled' = statusRaw === 'disabled' ? 'disabled' : 'active'
+  return { ...(data as any), status } as UserAccess
 }
