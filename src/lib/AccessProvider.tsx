@@ -18,7 +18,21 @@ export function AccessProvider({ children }: { children: ReactNode }) {
 
   const refresh = async () => {
     setLoading(true)
+    const { data: sessionData, error: sessionError } = await supabase.auth.getSession()
+    if (sessionError || !sessionData.session) {
+      setAccess(null)
+      setLoading(false)
+      return
+    }
+
     const ua = await fetchUserAccess()
+    if (!ua || ua.status === 'disabled') {
+      const reason = !ua ? 'no_access' : 'disabled'
+      await supabase.auth.signOut()
+      window.location.replace(`/?reason=${encodeURIComponent(reason)}`)
+      return
+    }
+
     setAccess(ua)
     setLoading(false)
   }

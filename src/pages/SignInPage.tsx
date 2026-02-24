@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import AppHeader from '../components/AppHeader'
 import { supabase } from '../lib/supabaseClient'
 import { useSupabaseAuth } from '../lib/useSupabaseAuth'
@@ -11,6 +11,15 @@ export default function SignInPage() {
   const [success, setSuccess] = useState<string | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [mode, setMode] = useState<'sign_in' | 'forgot'>('sign_in')
+
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get('reason')
+    if (reason === 'disabled') {
+      setError('Your account is disabled. Please contact an admin.')
+    } else if (reason === 'no_access') {
+      setError('Your account does not have access yet. Please contact an admin.')
+    }
+  }, [])
 
   async function onSubmit() {
     setError(null)
