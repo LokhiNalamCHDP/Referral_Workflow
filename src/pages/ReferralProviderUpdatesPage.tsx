@@ -568,7 +568,7 @@ export default function ReferralProviderUpdatesPage() {
                       </thead>
                       <tbody>
                         {filteredActiveRows.map((r) => (
-                          <tr key={r.id} className="hover:bg-slate-50">
+                          <tr key={r.id} className="odd:bg-slate-50 hover:bg-slate-100">
                             <td className="border-b px-3 py-2 text-sm text-slate-800">{r.patientName}</td>
                             <td className="border-b px-3 py-2 text-sm text-slate-800">{r.referralProvider}</td>
                             <td className="border-b px-3 py-2 text-sm text-slate-800">{r.location}</td>
