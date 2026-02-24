@@ -1,3 +1,5 @@
+export {}
+
 type Json = Record<string, unknown>
 
 declare const Deno: {

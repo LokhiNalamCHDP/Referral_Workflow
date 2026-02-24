@@ -6,6 +6,7 @@ import ReferralProviderUpdatesPage from './pages/ReferralProviderUpdatesPage'
 import AuthCallbackPage from './pages/AuthCallbackPage'
 import SetPasswordPage from './pages/SetPasswordPage'
 import TableSettingsPage from './pages/TableSettingsPage'
+import UserManagementPage from './pages/UserManagementPage'
 import { useAccess } from './lib/AccessProvider'
 import { canAdmin } from './lib/permissions'
 
@@ -30,6 +31,14 @@ export default function App() {
         element={
           <AdminRoute>
             <TableSettingsPage />
+          </AdminRoute>
+        }
+      />
+      <Route
+        path="/user-management"
+        element={
+          <AdminRoute>
+            <UserManagementPage />
           </AdminRoute>
         }
       />

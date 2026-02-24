@@ -138,6 +138,16 @@ export default function AppHeader({
                     Table settings
                   </NavItem>
                 ) : null}
+                {isAdmin ? (
+                  <NavItem
+                    onClick={() => {
+                      setIsNavOpen(false)
+                      navigate('/user-management')
+                    }}
+                  >
+                    User management
+                  </NavItem>
+                ) : null}
               </div>
             ) : null}
           </div>
