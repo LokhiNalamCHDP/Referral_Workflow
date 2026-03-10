@@ -28,6 +28,9 @@ export default function UserManagementPage() {
   const [addError, setAddError] = useState<string | null>(null)
   const [isAdding, setIsAdding] = useState(false)
 
+  const addLocationRequired = addRole === 'editor' || addRole === 'guest'
+  const canInvite = !isAdding && (!addLocationRequired || Boolean(addLocation))
+
   const roles = useMemo<Role[]>(() => ['admin', 'editor', 'guest'], [])
   const locations = useMemo<Location[]>(() => ['CH_Elko', 'CH_LakeHavasu', 'CH_Pahrump'], [])
   const statuses = useMemo<Array<'active' | 'disabled'>>(() => ['active', 'disabled'], [])
@@ -86,6 +89,11 @@ export default function UserManagementPage() {
     if (!r) return
     if (!isRowDirty(r)) return
 
+    if ((r.role === 'editor' || r.role === 'guest') && !r.location) {
+      setError('Location is required for editor and guest')
+      return
+    }
+
     const locationToSave = r.role === 'admin' ? null : r.location
 
     setSavingUserId(userId)
@@ -121,6 +129,11 @@ export default function UserManagementPage() {
     const email = addEmail.trim()
     if (!email) {
       setAddError('Email is required')
+      return
+    }
+
+    if ((addRole === 'editor' || addRole === 'guest') && !addLocation) {
+      setAddError('Location is required for editor and guest')
       return
     }
 
@@ -224,6 +237,7 @@ export default function UserManagementPage() {
                   rows.map((r) => {
                     const dirty = isRowDirty(r)
                     const isSaving = savingUserId === r.userId
+                    const isRowValid = r.role === 'admin' || Boolean(r.location)
 
                     return (
                       <tr key={r.userId} className="odd:bg-slate-50 hover:bg-slate-100">
@@ -294,9 +308,9 @@ export default function UserManagementPage() {
                           <button
                             type="button"
                             onClick={() => void saveRow(r.userId)}
-                            disabled={!dirty || isSaving}
+                            disabled={!dirty || isSaving || !isRowValid}
                             className={
-                              !dirty || isSaving
+                              !dirty || isSaving || !isRowValid
                                 ? 'rounded-md bg-emerald-200 px-3 py-1.5 text-sm font-semibold text-white opacity-80'
                                 : 'rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-emerald-700'
                             }
@@ -358,7 +372,7 @@ export default function UserManagementPage() {
                     disabled={addRole === 'admin'}
                     className="w-full rounded-md border bg-white px-3 py-2 text-sm"
                   >
-                    <option value="">(none)</option>
+                    <option value="">(select)</option>
                     {locations.map((opt) => (
                       <option key={opt} value={opt}>
                         {opt}
@@ -396,9 +410,9 @@ export default function UserManagementPage() {
                 <button
                   type="button"
                   onClick={() => void inviteUser()}
-                  disabled={isAdding}
+                  disabled={!canInvite}
                   className={
-                    isAdding
+                    !canInvite
                       ? 'rounded-md bg-emerald-200 px-3 py-2 text-sm font-semibold text-white opacity-80'
                       : 'rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700'
                   }

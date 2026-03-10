@@ -7,7 +7,8 @@ import { supabase } from '../lib/supabaseClient'
 import useLocalStorageState from '../lib/useLocalStorageState'
 import { useSupabaseAuth } from '../lib/useSupabaseAuth'
 import { useAccess } from '../lib/AccessProvider'
-import { canEdit } from '../lib/permissions'
+import { canAdmin, canEdit } from '../lib/permissions'
+import type { Location } from '../lib/accessTypes'
 
 type FieldType = 'text' | 'checkbox' | 'date' | 'datetime'
 
@@ -169,6 +170,9 @@ const SCHEMAS: Record<Specialty, ColumnDef[]> = {
     { key: 'thirdPatientCommunication', label: '3rd patient communication', type: 'datetime' },
     { key: 'apptDateTime', label: 'Appt date/time', type: 'datetime' },
     { key: 'notes', label: 'Notes', type: 'text' },
+    { key: 'aiContactStatus', label: 'AI Contact Status', type: 'text' },
+    { key: 'aiContactedAt', label: 'AI Contacted At', type: 'datetime' },
+    { key: 'aiContactNotes', label: 'AI Contact Notes', type: 'text' },
   ],
   'General Surgery': [
     { key: 'dateReferralReceived', label: 'Date Referral Received', type: 'date' },
@@ -588,6 +592,20 @@ export default function ReferralTablePage() {
   const { session } = useSupabaseAuth()
   const access = useAccess()
   const canEditRows = canEdit(access.access?.role)
+  const isAdmin = canAdmin(access.access?.role)
+
+  const locations = useMemo<Location[]>(() => ['CH_Elko', 'CH_LakeHavasu', 'CH_Pahrump'], [])
+  const [selectedLocation, setSelectedLocation] = useLocalStorageState<Location | ''>(
+    'referral_table_admin_location',
+    access.access?.location ?? '',
+  )
+
+  useEffect(() => {
+    if (!isAdmin) return
+    if (selectedLocation) return
+    const next = (access.access?.location as Location | null) ?? locations[0]
+    if (next) setSelectedLocation(next)
+  }, [access.access?.location, isAdmin, locations, selectedLocation, setSelectedLocation])
 
   const [activeSpecialty, setActiveSpecialty] = useState<Specialty>(SPECIALTIES[0])
 
@@ -636,7 +654,7 @@ export default function ReferralTablePage() {
     void (async () => {
       const { data, error } = await supabase
         .from('referral_providers')
-        .select('id, referral_provider, provider_practice')
+        .select('*')
         .order('referral_provider', { ascending: true })
 
       if (!isMounted) return
@@ -644,13 +662,23 @@ export default function ReferralTablePage() {
         setProviderOptions([])
         return
       }
-      setProviderOptions((data ?? []) as any)
+
+      const targetLocation = isAdmin ? selectedLocation : access.access?.location
+      const next =
+        targetLocation
+          ? (data ?? []).filter((r: any) => {
+              if (!r || typeof r !== 'object' || !('location' in r)) return true
+              return String((r as any).location ?? '') === String(targetLocation)
+            })
+          : data ?? []
+
+      setProviderOptions(next as any)
     })()
 
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [access.access?.location, isAdmin, selectedLocation])
 
   function insuranceRowLabel(r: any): string {
     if (!r || typeof r !== 'object') return ''
@@ -673,8 +701,9 @@ export default function ReferralTablePage() {
       if (!isMounted) return
       if (error) return
 
+      const activeOnly = (data ?? []).filter((r: any) => r?.is_active === true)
       const next = Array.from(
-        new Set((data ?? []).map(insuranceRowLabel).map((v) => v.trim()).filter(Boolean)),
+        new Set(activeOnly.map(insuranceRowLabel).map((v) => v.trim()).filter(Boolean)),
       ).sort((a, b) => a.localeCompare(b))
 
       setInsuranceOptions(['', ...next])
@@ -720,6 +749,9 @@ export default function ReferralTablePage() {
       statusUpdatedAt: r.status_updated_at,
       emailSentAt: r.email_sent_at,
       notes: r.notes,
+      aiContactStatus: r.ai_contact_status,
+      aiContactedAt: r.ai_contacted_at,
+      aiContactNotes: r.ai_contact_notes,
     }
 
     for (const col of schemaForRow) {
@@ -847,13 +879,17 @@ export default function ReferralTablePage() {
     void (async () => {
       const tableName = SPECIALTY_TABLES[activeSpecialty]
 
-      const query = tableName
+      let query = tableName
         ? supabase.from(tableName).select('*').eq('record_status', 'active')
         : supabase
             .from('referrals')
             .select('id, archived, data, created_at')
             .eq('user_id', uid)
             .eq('specialty', activeSpecialty)
+
+      if (tableName && isAdmin && selectedLocation) {
+        query = (query as any).eq('location', selectedLocation)
+      }
 
       const { data, error } = await query.order('created_at', { ascending: false })
 
@@ -866,9 +902,22 @@ export default function ReferralTablePage() {
         return
       }
 
-      const next: Row[] = (data ?? []).map((r: any) =>
-        tableName ? mapReferralTableRecordToRow(r, baseSchema) : mapSupabaseRecordToRow(r, baseSchema),
-      )
+      const filtered =
+        !tableName && isAdmin && selectedLocation
+          ? (data ?? []).filter((r: any) => {
+              const loc =
+                r && typeof r === 'object' && r.data && typeof r.data === 'object'
+                  ? String((r.data as any).location ?? '')
+                  : ''
+              return loc === selectedLocation
+            })
+          : data ?? []
+
+      const next: Row[] = filtered.map((r: any) => {
+        if (!tableName) return mapSupabaseRecordToRow(r, baseSchema)
+        if (activeSpecialty === 'Colonoscopy and EGD') return mapColonoscopyEgdRecordToRow(r, baseSchema)
+        return mapReferralTableRecordToRow(r, baseSchema)
+      })
 
       setRows(next)
       setIsRowsLoading(false)
@@ -877,7 +926,7 @@ export default function ReferralTablePage() {
     return () => {
       isMounted = false
     }
-  }, [activeSpecialty, baseSchema, session?.user?.id])
+  }, [activeSpecialty, baseSchema, isAdmin, selectedLocation, session?.user?.id])
 
   const [searchBy, setSearchBy] = useState<string>('__all__')
   const [searchText, setSearchText] = useState('')
@@ -1164,6 +1213,16 @@ export default function ReferralTablePage() {
       return
     }
 
+    if (!editingId && isAdmin && !selectedLocation) {
+      setSaveError('Please select a location from the top dropdown')
+      return
+    }
+
+    if (!editingId && !isAdmin && !access.access?.location) {
+      setSaveError('Your user account has no location assigned. Please contact an admin.')
+      return
+    }
+
     const nextStatusInput = typeof draft.status === 'string' ? draft.status.trim() : ''
     const nextApptDateTime = typeof draft.apptDateTime === 'string' ? draft.apptDateTime.trim() : ''
     const nextThirdCommunication =
@@ -1200,6 +1259,14 @@ export default function ReferralTablePage() {
       }
     }
 
+    if (!editingId && isAdmin && selectedLocation) {
+      data.location = selectedLocation
+    }
+
+    if (!editingId && !isAdmin && access.access?.location) {
+      data.location = access.access.location
+    }
+
     const targetSpecialty = editingId ? activeSpecialty : editorSpecialty
     const archived = editingRow?.archived === true
     const tableName = SPECIALTY_TABLES[targetSpecialty]
@@ -1228,6 +1295,14 @@ export default function ReferralTablePage() {
           const payload: any = {
             record_status: archived ? 'archived' : 'active',
             updated_at: new Date().toISOString(),
+          }
+
+          if (!editingId && isAdmin && selectedLocation) {
+            payload.location = selectedLocation
+          }
+
+          if (!editingId && !isAdmin && access.access?.location) {
+            payload.location = access.access.location
           }
 
           if (schemaKeys.has('dateReferralReceived')) {
@@ -1298,15 +1373,30 @@ export default function ReferralTablePage() {
           if (schemaKeys.has('notes2')) {
             payload.notes_2 = String((data as any).notes2 ?? '')
           }
+          if (schemaKeys.has('aiContactStatus')) {
+            payload.ai_contact_status = String((data as any).aiContactStatus ?? '')
+          }
+          if (schemaKeys.has('aiContactedAt')) {
+            payload.ai_contacted_at = toIsoDateTime((data as any).aiContactedAt)
+          }
+          if (schemaKeys.has('aiContactNotes')) {
+            payload.ai_contact_notes = String((data as any).aiContactNotes ?? '')
+          }
 
           if (editingId) {
             const { error } = await supabase.from(tableName).update(payload).eq('id', Number(editingId))
             if (error) throw error
 
-            const nextRow = mapReferralTableRecordToRow(
-              { id: Number(editingId), record_status: payload.record_status, ...payload },
-              editorSchema,
-            )
+            const nextRow =
+              targetSpecialty === 'Colonoscopy and EGD'
+                ? mapColonoscopyEgdRecordToRow(
+                    { id: Number(editingId), record_status: payload.record_status, ...payload },
+                    editorSchema,
+                  )
+                : mapReferralTableRecordToRow(
+                    { id: Number(editingId), record_status: payload.record_status, ...payload },
+                    editorSchema,
+                  )
             nextRow.referringProvider = resolvedProviderText
             nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
             nextRow[REFERRING_PROVIDER_PRACTICE_KEY] = resolvedProviderPractice
@@ -1326,10 +1416,16 @@ export default function ReferralTablePage() {
           if (error) throw error
 
           const insertedId = String(inserted?.id ?? '')
-          const nextRow = mapReferralTableRecordToRow(
-            { id: Number(inserted?.id ?? 0), record_status: payload.record_status, ...payload },
-            editorSchema,
-          )
+          const nextRow =
+            targetSpecialty === 'Colonoscopy and EGD'
+              ? mapColonoscopyEgdRecordToRow(
+                  { id: Number(inserted?.id ?? 0), record_status: payload.record_status, ...payload },
+                  editorSchema,
+                )
+              : mapReferralTableRecordToRow(
+                  { id: Number(inserted?.id ?? 0), record_status: payload.record_status, ...payload },
+                  editorSchema,
+                )
           nextRow.id = insertedId
           nextRow.referringProvider = resolvedProviderText
           nextRow.referringProviderId = resolvedProviderId != null ? String(resolvedProviderId) : ''
@@ -1469,6 +1565,17 @@ export default function ReferralTablePage() {
     return [...pinned, ...rest]
   }, [orderedSchema, pinnedKeys])
 
+  const aiColumns = useMemo<ColumnDef[]>(() => {
+    return []
+  }, [activeSpecialty, displaySchema])
+
+  const mainDisplaySchema = useMemo(() => {
+    if (activeSpecialty !== 'Colonoscopy and EGD') return displaySchema
+    return displaySchema.filter(
+      (c) => c.key !== 'aiContactStatus' && c.key !== 'aiContactedAt' && c.key !== 'aiContactNotes',
+    )
+  }, [activeSpecialty, displaySchema])
+
   useEffect(() => {
     if (!tableRef.current) return
 
@@ -1496,7 +1603,7 @@ export default function ReferralTablePage() {
     }
 
     setPinnedLeftOffsets(offsets)
-  }, [displaySchema, pinnedKeysInSchemaOrder.length])
+  }, [mainDisplaySchema, pinnedKeysInSchemaOrder.length])
 
   function stickyStyle(index: number, isHeader: boolean) {
     if (index >= pinnedKeysInSchemaOrder.length) return undefined
@@ -1515,6 +1622,19 @@ export default function ReferralTablePage() {
         subtitle={activeSpecialty}
         right={
           <>
+            {isAdmin ? (
+              <select
+                value={selectedLocation}
+                onChange={(e) => setSelectedLocation(e.target.value as Location)}
+                className="mr-2 w-[200px] rounded-md border bg-white px-3 py-2 text-sm text-slate-900 outline-none ring-slate-200 focus:ring-2"
+              >
+                {locations.map((loc) => (
+                  <option key={loc} value={loc}>
+                    {loc}
+                  </option>
+                ))}
+              </select>
+            ) : null}
             <button
               type="button"
               onClick={openAdd}
@@ -1766,7 +1886,7 @@ export default function ReferralTablePage() {
             >
               <thead className="sticky top-0 bg-white">
                 <tr>
-                  {displaySchema.map((col, idx) => (
+                  {mainDisplaySchema.map((col, idx) => (
                     <Th
                       key={col.key}
                       dataColKey={col.key}
@@ -1781,13 +1901,25 @@ export default function ReferralTablePage() {
                     </Th>
                   ))}
                   {canEditRows ? <Th className="w-[160px]">Actions</Th> : null}
+                  {aiColumns.map((col) => (
+                    <Th
+                      key={col.key}
+                      className={clsx(isNotesColumn(col) && 'w-[320px] min-w-[320px]', isDateTimeColumn(col) && 'w-[190px] max-w-[190px]')}
+                    >
+                      {col.label}
+                    </Th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 {sortedRows.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={displaySchema.length + (canEditRows ? 1 : 0)}
+                      colSpan={
+                        mainDisplaySchema.length +
+                        (canEditRows ? 1 : 0) +
+                        aiColumns.length
+                      }
                       className="border-t px-4 py-10 text-center text-sm text-slate-600"
                     >
                       {isRowsLoading
@@ -1802,7 +1934,7 @@ export default function ReferralTablePage() {
                 ) : (
                   sortedRows.map((r) => (
                     <tr key={r.id} className="odd:bg-slate-50 hover:bg-slate-100">
-                      {displaySchema.map((col, idx) => (
+                      {mainDisplaySchema.map((col, idx) => (
                         <Td
                           key={col.key}
                           className={clsx(
@@ -1832,7 +1964,9 @@ export default function ReferralTablePage() {
                                     const split = rawProvider.split(' - ')
                                     const left = split[0] ?? ''
                                     const rawPracticeFromTable = String(
-                                      (r as any).provider_practice ?? (r as any).providerPractice ?? '',
+                                      (r as any).provider_practice ??
+                                        (r as any).providerPractice ??
+                                        '',
                                     )
 
                                     if (col.key === REFERRING_PROVIDER_PRACTICE_KEY) {
@@ -1890,6 +2024,21 @@ export default function ReferralTablePage() {
                           </div>
                         </Td>
                       ) : null}
+
+                      {aiColumns.map((col) => (
+                        <Td
+                          key={col.key}
+                          className={clsx(
+                            col.type === 'text' && !isNotesColumn(col) && 'truncate',
+                            isNotesColumn(col) && 'whitespace-pre-wrap break-words',
+                            isDateTimeColumn(col) && 'whitespace-nowrap',
+                            isNotesColumn(col) && 'w-[320px] min-w-[320px]',
+                            isDateTimeColumn(col) && 'w-[190px] max-w-[190px]',
+                          )}
+                        >
+                          {isDateTimeColumn(col) ? formatDateTimeDisplay(r[col.key]) : String(r[col.key] ?? '')}
+                        </Td>
+                      ))}
                     </tr>
                   ))
                 )}
